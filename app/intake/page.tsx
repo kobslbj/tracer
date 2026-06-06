@@ -8,7 +8,7 @@ import { classifyShipment } from '@/lib/mock-classifier'
 import { insertEntry } from '@/lib/insforge-db'
 import { Entry, AgentStatus } from '@/lib/types'
 import { ShipmentInput } from '@/components/intake/shipment-input'
-import { AgentCard } from '@/components/intake/replica-card'
+import { AgentCard } from '@/components/intake/agent-card'
 import { EntryResult } from '@/components/entry/entry-result'
 import { Tag, Calculator, ShieldCheck, FileText } from 'lucide-react'
 
