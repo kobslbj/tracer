@@ -1,21 +1,23 @@
 import type { Metadata } from "next";
-import { Geist, Geist_Mono } from "next/font/google";
+import { Inter, JetBrains_Mono } from "next/font/google";
 import "./globals.css";
 import { StoreProvider } from "@/lib/store";
-import { Sidebar } from "@/components/layout/sidebar";
+import { TopNav } from "@/components/layout/top-nav";
 
-const geistSans = Geist({
-  variable: "--font-geist-sans",
+const inter = Inter({
+  variable: "--font-sans",
   subsets: ["latin"],
+  display: "swap",
 });
 
-const geistMono = Geist_Mono({
-  variable: "--font-geist-mono",
+const jetbrainsMono = JetBrains_Mono({
+  variable: "--font-mono",
   subsets: ["latin"],
+  display: "swap",
 });
 
 export const metadata: Metadata = {
-  title: "Traceer — AI Customs Operations",
+  title: "Tracer — AI Customs Operations",
   description: "AI-powered customs entry processing for brokers",
 };
 
@@ -27,13 +29,13 @@ export default function RootLayout({
   return (
     <html
       lang="en"
-      className={`${geistSans.variable} ${geistMono.variable} dark h-full antialiased`}
+      className={`${inter.variable} ${jetbrainsMono.variable} dark h-full antialiased`}
     >
-      <body className="min-h-full bg-background text-foreground">
+      <body className="app-backdrop app-grid min-h-full text-foreground">
         <StoreProvider>
-          <div className="flex h-screen overflow-hidden">
-            <Sidebar />
-            <main className="flex-1 overflow-y-auto">
+          <div className="relative flex min-h-screen flex-col">
+            <TopNav />
+            <main className="relative flex-1">
               {children}
             </main>
           </div>

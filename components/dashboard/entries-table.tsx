@@ -15,18 +15,19 @@ import {
 interface EntriesTableProps {
   entries: Entry[]
   newEntryId?: string | null
+  onRowClick?: (entry: Entry) => void
 }
 
 function formatCurrency(value: number) {
   return new Intl.NumberFormat('en-US', { style: 'currency', currency: 'USD', maximumFractionDigits: 0 }).format(value)
 }
 
-export function EntriesTable({ entries, newEntryId }: EntriesTableProps) {
+export function EntriesTable({ entries, newEntryId, onRowClick }: EntriesTableProps) {
   return (
-    <div className="rounded-xl border border-border overflow-hidden">
+    <div className="overflow-hidden rounded-xl border border-border bg-card/40 backdrop-blur-sm">
       <Table>
         <TableHeader>
-          <TableRow className="border-border hover:bg-transparent">
+          <TableRow className="border-border bg-muted/30 hover:bg-transparent">
             <TableHead className="text-muted-foreground font-medium">Entry No.</TableHead>
             <TableHead className="text-muted-foreground font-medium">Port</TableHead>
             <TableHead className="text-muted-foreground font-medium">Product</TableHead>
@@ -46,7 +47,8 @@ export function EntriesTable({ entries, newEntryId }: EntriesTableProps) {
                 initial={entry.id === newEntryId ? { opacity: 0, backgroundColor: 'oklch(0.25 0.12 160)' } : { opacity: 1 }}
                 animate={{ opacity: 1, backgroundColor: 'oklch(0 0 0 / 0)' }}
                 transition={{ duration: 0.8 }}
-                className="border-border"
+                className={`border-border transition-colors hover:bg-muted/30 ${onRowClick ? 'cursor-pointer' : ''}`}
+                onClick={() => onRowClick?.(entry)}
               >
                 <TableCell className="font-mono text-sm font-medium text-foreground">
                   {entry.entryNo}

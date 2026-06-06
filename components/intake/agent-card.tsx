@@ -1,7 +1,5 @@
 'use client'
 
-import { motion } from 'framer-motion'
-import { Check, Loader2, AlertCircle } from 'lucide-react'
 import { AgentPhase } from '@/lib/types'
 import { AgentLog } from './agent-log'
 import { cn } from '@/lib/utils'
@@ -11,10 +9,16 @@ interface AgentCardProps {
   description: string
   phase: AgentPhase
   logLines: string[]
-  icon: React.ReactNode
 }
 
-export function AgentCard({ name, description, phase, logLines, icon }: AgentCardProps) {
+const phaseLabel: Record<AgentPhase, string> = {
+  idle: 'Queued',
+  running: 'Running',
+  complete: 'Done',
+  error: 'Error',
+}
+
+export function AgentCard({ name, description, phase, logLines }: AgentCardProps) {
   const isRunning = phase === 'running'
   const isComplete = phase === 'complete'
   const isError = phase === 'error'
@@ -22,72 +26,30 @@ export function AgentCard({ name, description, phase, logLines, icon }: AgentCar
   return (
     <div
       className={cn(
-        'relative rounded-xl border bg-card p-4 transition-colors duration-300',
-        isRunning && 'border-primary/40',
-        isComplete && 'border-emerald-500/40',
-        isError && 'border-red-500/40',
-        phase === 'idle' && 'border-border opacity-50'
+        'rounded-xl border bg-card/60 p-4 backdrop-blur-sm transition-all duration-300',
+        isRunning && 'border-primary/35 shadow-[0_0_24px_-12px_var(--color-primary)]',
+        isComplete && 'border-emerald-500/25',
+        isError && 'border-red-500/35',
+        phase === 'idle' && 'border-border/70 opacity-55'
       )}
     >
-      {/* Pulse ring when running */}
-      {isRunning && (
-        <motion.div
-          className="absolute inset-0 rounded-xl border-2 border-primary/30"
-          animate={{ scale: [1, 1.02, 1], opacity: [0.5, 0.8, 0.5] }}
-          transition={{ duration: 1.5, repeat: Infinity, ease: 'easeInOut' }}
-        />
-      )}
-
-      <div className="flex items-start gap-3">
-        {/* Icon + status indicator */}
-        <div className="relative shrink-0">
-          <div
-            className={cn(
-              'w-9 h-9 rounded-lg flex items-center justify-center',
-              isRunning && 'bg-primary/20 text-primary',
-              isComplete && 'bg-emerald-500/20 text-emerald-400',
-              isError && 'bg-red-500/20 text-red-400',
-              phase === 'idle' && 'bg-muted text-muted-foreground'
-            )}
-          >
-            {isRunning ? (
-              <Loader2 className="w-4 h-4 animate-spin" />
-            ) : isComplete ? (
-              <motion.div
-                initial={{ scale: 0 }}
-                animate={{ scale: 1 }}
-                transition={{ type: 'spring', stiffness: 300, damping: 20 }}
-              >
-                <Check className="w-4 h-4" />
-              </motion.div>
-            ) : isError ? (
-              <AlertCircle className="w-4 h-4" />
-            ) : (
-              icon
-            )}
-          </div>
-        </div>
-
-        {/* Content */}
-        <div className="flex-1 min-w-0">
-          <div className="flex items-center justify-between gap-2">
-            <h3 className="text-sm font-semibold text-foreground">{name}</h3>
-            <span
-              className={cn(
-                'text-xs font-medium',
-                isRunning && 'text-primary',
-                isComplete && 'text-emerald-400',
-                isError && 'text-red-400',
-                phase === 'idle' && 'text-muted-foreground'
-              )}
-            >
-              {phase === 'idle' ? 'Waiting' : phase === 'running' ? 'Running...' : phase === 'complete' ? 'Done' : 'Error'}
-            </span>
-          </div>
-          <p className="text-xs text-muted-foreground mt-0.5">{description}</p>
-          <AgentLog lines={logLines} />
-        </div>
+      <div className="flex items-center justify-between gap-2">
+        <h3 className="text-sm font-semibold text-foreground">{name}</h3>
+        <span
+          className={cn(
+            'inline-flex items-center gap-1.5 rounded-full px-2 py-0.5 text-[11px] font-medium',
+            isRunning && 'bg-primary/10 text-primary',
+            isComplete && 'bg-emerald-500/10 text-emerald-400',
+            isError && 'bg-red-500/10 text-red-400',
+            phase === 'idle' && 'bg-muted/60 text-muted-foreground'
+          )}
+        >
+          {isRunning && <span className="h-1.5 w-1.5 animate-pulse rounded-full bg-current" />}
+          {phaseLabel[phase]}
+        </span>
       </div>
+      <p className="mt-0.5 text-xs text-muted-foreground">{description}</p>
+      <AgentLog lines={logLines} />
     </div>
   )
 }

@@ -3,6 +3,7 @@
 import { useEffect, useRef, useState } from 'react'
 import { useStore } from '@/lib/store'
 import { EntriesTable } from '@/components/dashboard/entries-table'
+import { EntryModal } from '@/components/entry/entry-modal'
 import { Entry } from '@/lib/types'
 import { insforge } from '@/lib/insforge'
 import { updateEntryStatus } from '@/lib/insforge-db'
@@ -13,6 +14,7 @@ const FILING_TO_CLEARED_MS = 15_000
 export default function DashboardPage() {
   const { state, dispatch } = useStore()
   const [newEntryId, setNewEntryId] = useState<string | null>(null)
+  const [selectedEntry, setSelectedEntry] = useState<Entry | null>(null)
   const prevLengthRef = useRef(state.entries.length)
 
   // Detect newly added entry (flash green)
@@ -80,35 +82,54 @@ export default function DashboardPage() {
   const filingCount = state.entries.filter(e => e.status === 'Filing').length
   const clearedCount = state.entries.filter(e => e.status === 'Cleared').length
 
+  const stats = [
+    { label: 'Under Review', value: reviewCount, tone: 'text-amber-400', glow: 'oklch(0.78 0.15 85 / 0.35)' },
+    { label: 'Filing', value: filingCount, tone: 'text-blue-400', glow: 'oklch(0.7 0.15 250 / 0.35)' },
+    { label: 'Cleared', value: clearedCount, tone: 'text-emerald-400', glow: 'oklch(0.72 0.16 160 / 0.35)' },
+  ]
+
   return (
-    <div className="p-8 max-w-6xl mx-auto">
-      <div className="mb-8">
-        <div className="flex items-center gap-3">
-          <h1 className="text-2xl font-bold text-foreground">Entry Dashboard</h1>
-          <div className="flex items-center gap-1.5 text-xs text-emerald-400 bg-emerald-950/50 border border-emerald-800/50 rounded-full px-2.5 py-1">
-            <span className="w-1.5 h-1.5 rounded-full bg-emerald-400 animate-pulse" />
-            Live
-          </div>
+    <div className="mx-auto max-w-6xl px-6 py-12">
+      <div className="mb-8 flex items-center justify-between gap-3">
+        <div>
+          <h1 className="text-2xl font-semibold tracking-tight text-foreground">Entry Dashboard</h1>
+          <p className="mt-1.5 text-sm text-muted-foreground">
+            Live customs entries, synced from InsForge Postgres via Realtime.
+          </p>
+        </div>
+        <div className="flex items-center gap-1.5 rounded-full border border-emerald-800/50 bg-emerald-950/40 px-2.5 py-1 text-xs text-emerald-400">
+          <span className="relative flex h-1.5 w-1.5">
+            <span className="absolute inline-flex h-full w-full animate-ping rounded-full bg-emerald-400/70" />
+            <span className="relative inline-flex h-1.5 w-1.5 rounded-full bg-emerald-400" />
+          </span>
+          Live
         </div>
       </div>
 
       {/* Stats */}
-      <div className="grid grid-cols-3 gap-4 mb-8">
-        <div className="rounded-xl border border-border bg-card p-4">
-          <p className="text-xs text-muted-foreground font-medium uppercase tracking-wider">Under Review</p>
-          <p className="text-3xl font-bold text-amber-400 mt-1">{reviewCount}</p>
-        </div>
-        <div className="rounded-xl border border-border bg-card p-4">
-          <p className="text-xs text-muted-foreground font-medium uppercase tracking-wider">Filing</p>
-          <p className="text-3xl font-bold text-blue-400 mt-1">{filingCount}</p>
-        </div>
-        <div className="rounded-xl border border-border bg-card p-4">
-          <p className="text-xs text-muted-foreground font-medium uppercase tracking-wider">Cleared</p>
-          <p className="text-3xl font-bold text-emerald-400 mt-1">{clearedCount}</p>
-        </div>
+      <div className="mb-8 grid grid-cols-3 gap-4">
+        {stats.map(s => (
+          <div
+            key={s.label}
+            className="relative overflow-hidden rounded-xl border border-border bg-card/60 p-4 backdrop-blur-sm"
+          >
+            <div
+              className="pointer-events-none absolute -right-6 -top-6 h-20 w-20 rounded-full blur-2xl"
+              style={{ background: s.glow }}
+            />
+            <p className="text-xs font-medium uppercase tracking-wider text-muted-foreground">{s.label}</p>
+            <p className={`mt-1 text-3xl font-semibold tabular-nums ${s.tone}`}>{s.value}</p>
+          </div>
+        ))}
       </div>
 
-      <EntriesTable entries={state.entries} newEntryId={newEntryId} />
+      <EntriesTable entries={state.entries} newEntryId={newEntryId} onRowClick={setSelectedEntry} />
+
+      <EntryModal
+        entry={selectedEntry}
+        open={!!selectedEntry}
+        onClose={() => setSelectedEntry(null)}
+      />
     </div>
   )
 }

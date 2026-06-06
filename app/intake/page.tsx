@@ -4,53 +4,12 @@ import { useState, useCallback } from 'react'
 import { useRouter } from 'next/navigation'
 import { motion, AnimatePresence } from 'framer-motion'
 import { useStore } from '@/lib/store'
-import { classifyShipment } from '@/lib/mock-classifier'
 import { insertEntry } from '@/lib/insforge-db'
 import { Entry, AgentStatus } from '@/lib/types'
 import { ShipmentInput } from '@/components/intake/shipment-input'
-import { AgentCard } from '@/components/intake/agent-card'
+import { AgentPipeline, PipelineAgent } from '@/components/intake/agent-pipeline'
 import { EntryResult } from '@/components/entry/entry-result'
 import { Tag, Calculator, ShieldCheck, FileText } from 'lucide-react'
-
-const agentLogs: Record<keyof AgentStatus, string[][]> = {
-  hts: [
-    ['→ Parsing product description...'],
-    ['→ Querying InsForge vector store (hts_knowledge)...', '→ Retrieving candidate tariff classifications...'],
-    ['→ Matching chapter headings · verifying Schedule B...'],
-    ['✓ HTS code confirmed · GRI rules applied'],
-  ],
-  duty: [
-    ['→ Loading duty schedule...'],
-    ['→ Checking Section 301 USTR lists (List 3 / List 4A)...', '→ Querying tariff DB...'],
-    ['→ Calculating ad valorem duty · applying incoterm adjustments...'],
-    ['✓ Duty rate confirmed · estimated liability calculated'],
-  ],
-  compliance: [
-    ['→ Screening CBP CATAIR restrictions...'],
-    ['→ Checking ECCN · FDA / DOT hazmat flags...'],
-    ['→ Verifying import restrictions · watchlist check...'],
-    ['✓ Risk level assessed · required docs generated'],
-  ],
-  entry: [
-    ['→ Compiling structured entry data...'],
-    ['→ Writing to InsForge Postgres (entries table)...', '→ Generating CBP Form 3461 fields...'],
-    ['→ Triggering realtime notify_entry_change()...'],
-    ['✓ Entry persisted to InsForge DB · broadcast complete'],
-  ],
-}
-
-interface AgentTiming {
-  agent: keyof AgentStatus
-  startDelay: number
-  duration: number
-}
-
-const timings: AgentTiming[] = [
-  { agent: 'hts', startDelay: 200, duration: 2000 },
-  { agent: 'duty', startDelay: 800, duration: 1800 },
-  { agent: 'compliance', startDelay: 1200, duration: 2200 },
-  { agent: 'entry', startDelay: 3400, duration: 1200 },
-]
 
 const agentConfig: Record<keyof AgentStatus, { name: string; description: string; icon: React.ReactNode }> = {
   hts: {
@@ -75,10 +34,6 @@ const agentConfig: Record<keyof AgentStatus, { name: string; description: string
   },
 }
 
-function generateEntryNo() {
-  return `ENT-${Math.floor(49300 + Math.random() * 1000)}`
-}
-
 export default function IntakePage() {
   const router = useRouter()
   const { state, dispatch } = useStore()
@@ -91,64 +46,77 @@ export default function IntakePage() {
     setLogLines(prev => ({ ...prev, [agent]: [...prev[agent], ...lines] }))
   }, [])
 
+  async function callAgent<T>(url: string, body: Record<string, unknown>, agent: keyof AgentStatus): Promise<T> {
+    const res = await fetch(url, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(body),
+    })
+    if (!res.ok) {
+      const err = await res.json().catch(() => ({ error: res.statusText }))
+      throw new Error(err.error ?? `${url} failed with ${res.status}`)
+    }
+    const data = await res.json()
+    if (data.logs?.length) appendLog(agent, data.logs)
+    return data as T
+  }
+
   async function runAgents(input: string) {
     dispatch({ type: 'RESET_AGENTS' })
     dispatch({ type: 'SET_PROCESSING', value: true })
     setLogLines({ hts: [], duty: [], compliance: [], entry: [] })
     setShowAgents(true)
 
-    const classifyPromise = classifyShipment(input)
+    try {
+      // 1. HTS Classification (sequential — duty & compliance depend on it)
+      dispatch({ type: 'SET_AGENT_STATUS', agent: 'hts', phase: 'running' })
+      const classify = await callAgent<{
+        htsCode: string; productName: string; description: string
+        originCountry: string; port: 'LAX' | 'JFK' | 'SEA'
+        quantity: number; valueUsd: number; incoterm: string
+      }>('/api/agents/classify', { input }, 'hts')
+      dispatch({ type: 'SET_AGENT_STATUS', agent: 'hts', phase: 'complete' })
 
-    timings.forEach(({ agent, startDelay, duration }) => {
-      setTimeout(() => {
-        dispatch({ type: 'SET_AGENT_STATUS', agent, phase: 'running' })
+      // 2. Duty + Compliance in parallel
+      dispatch({ type: 'SET_AGENT_STATUS', agent: 'duty', phase: 'running' })
+      dispatch({ type: 'SET_AGENT_STATUS', agent: 'compliance', phase: 'running' })
+      const [duty, compliance] = await Promise.all([
+        callAgent<{ dutyRate: number; estimatedDutyUsd: number; dutyBasis: string }>('/api/agents/duty', {
+          htsCode: classify.htsCode,
+          originCountry: classify.originCountry,
+          valueUsd: classify.valueUsd,
+          incoterm: classify.incoterm,
+        }, 'duty'),
+        callAgent<{ riskLevel: string; reviewRequired: boolean; reviewReason: string; requiredDocs: string[]; explanation: string }>('/api/agents/compliance', {
+          htsCode: classify.htsCode,
+          originCountry: classify.originCountry,
+          productName: classify.productName,
+          description: classify.description,
+        }, 'compliance'),
+      ])
+      dispatch({ type: 'SET_AGENT_STATUS', agent: 'duty', phase: 'complete' })
+      dispatch({ type: 'SET_AGENT_STATUS', agent: 'compliance', phase: 'complete' })
 
-        const logBatches = agentLogs[agent]
-        logBatches.forEach((batch, i) => {
-          setTimeout(() => appendLog(agent, batch), (duration / logBatches.length) * i)
-        })
+      // 3. Draft assembly
+      dispatch({ type: 'SET_AGENT_STATUS', agent: 'entry', phase: 'running' })
+      const { draft } = await callAgent<{ draft: Entry }>('/api/agents/draft', {
+        ...classify,
+        dutyRate: duty.dutyRate,
+        estimatedDutyUsd: duty.estimatedDutyUsd,
+        riskLevel: compliance.riskLevel,
+        reviewRequired: compliance.reviewRequired,
+        reviewReason: compliance.reviewReason,
+        requiredDocs: compliance.requiredDocs,
+        explanation: compliance.explanation,
+      }, 'entry')
+      dispatch({ type: 'SET_AGENT_STATUS', agent: 'entry', phase: 'complete' })
 
-        setTimeout(() => {
-          dispatch({ type: 'SET_AGENT_STATUS', agent, phase: 'complete' })
-        }, duration)
-      }, startDelay)
-    })
-
-    const lastTiming = timings[timings.length - 1]
-    const totalMs = lastTiming.startDelay + lastTiming.duration + 300
-
-    const [result] = await Promise.all([
-      classifyPromise,
-      new Promise(resolve => setTimeout(resolve, totalMs)),
-    ])
-
-    const estimatedDutyUsd = Math.round(result.valueUsd * result.dutyRate / 100)
-
-    const draft: Entry = {
-      id: `ent-${Date.now()}`,
-      entryNo: generateEntryNo(),
-      port: result.port,
-      productName: result.productName,
-      description: result.description,
-      originCountry: result.originCountry,
-      quantity: result.quantity,
-      valueUsd: result.valueUsd,
-      incoterm: result.incoterm,
-      htsCode: result.htsCode,
-      dutyRate: result.dutyRate,
-      estimatedDutyUsd,
-      riskLevel: result.riskLevel,
-      reviewRequired: result.reviewRequired,
-      reviewReason: result.reviewReason,
-      status: 'Draft',
-      requiredDocs: result.requiredDocs,
-      explanation: result.explanation,
-      createdAt: new Date().toISOString(),
-      updatedAt: new Date().toISOString(),
+      dispatch({ type: 'SET_DRAFT', draft })
+    } catch (err) {
+      console.error('[runAgents]', err)
+    } finally {
+      dispatch({ type: 'SET_PROCESSING', value: false })
     }
-
-    dispatch({ type: 'SET_DRAFT', draft })
-    dispatch({ type: 'SET_PROCESSING', value: false })
   }
 
   async function handleApprove() {
@@ -159,14 +127,25 @@ export default function IntakePage() {
     router.push('/dashboard')
   }
 
-  const allComplete = (['hts', 'duty', 'compliance', 'entry'] as const).every(
-    k => state.agentStatus[k] === 'complete'
-  )
+  const agentKeys = ['hts', 'duty', 'compliance', 'entry'] as const
+  const allComplete = agentKeys.every(k => state.agentStatus[k] === 'complete')
+
+  const pipelineAgents: PipelineAgent[] = agentKeys.map(key => ({
+    key,
+    name: agentConfig[key].name,
+    description: agentConfig[key].description,
+    icon: agentConfig[key].icon,
+    phase: state.agentStatus[key],
+    logLines: logLines[key],
+  }))
 
   return (
-    <div className="p-8 max-w-4xl mx-auto">
+    <div className="mx-auto max-w-3xl px-6 py-12">
       <div className="mb-8">
-        <h1 className="text-2xl font-bold text-foreground">New Shipment</h1>
+        <h1 className="text-2xl font-semibold tracking-tight text-foreground">New Shipment</h1>
+        <p className="mt-1.5 text-sm text-muted-foreground">
+          Describe a shipment and let the AI agent pipeline classify, price duty, screen compliance and draft the CBP entry.
+        </p>
       </div>
 
       <ShipmentInput onSubmit={runAgents} disabled={state.isProcessing} />
@@ -177,34 +156,26 @@ export default function IntakePage() {
             initial={{ opacity: 0, y: 16 }}
             animate={{ opacity: 1, y: 0 }}
             transition={{ duration: 0.3 }}
-            className="mt-8 space-y-6"
+            className="mt-10 space-y-8"
           >
             <div>
-              <div className="flex items-center gap-2 mb-4">
-                <h2 className="text-sm font-semibold text-muted-foreground uppercase tracking-wider">
+              <div className="mb-5 flex items-center gap-2">
+                <h2 className="text-xs font-semibold uppercase tracking-wider text-muted-foreground">
                   Agent Pipeline
                 </h2>
-                <span className="text-xs text-muted-foreground">· running in parallel</span>
+                <span className="h-px flex-1 bg-linear-to-r from-border to-transparent" />
               </div>
-              <div className="grid grid-cols-2 gap-3">
-                {(['hts', 'duty', 'compliance', 'entry'] as const).map(agent => (
-                  <AgentCard
-                    key={agent}
-                    name={agentConfig[agent].name}
-                    description={agentConfig[agent].description}
-                    phase={state.agentStatus[agent]}
-                    logLines={logLines[agent]}
-                    icon={agentConfig[agent].icon}
-                  />
-                ))}
-              </div>
+              <AgentPipeline agents={pipelineAgents} />
             </div>
 
             {allComplete && state.currentDraft && (
               <div>
-                <h2 className="text-sm font-semibold text-muted-foreground uppercase tracking-wider mb-4">
-                  Classification Result
-                </h2>
+                <div className="mb-5 flex items-center gap-2">
+                  <h2 className="text-xs font-semibold uppercase tracking-wider text-muted-foreground">
+                    Classification Result
+                  </h2>
+                  <span className="h-px flex-1 bg-linear-to-r from-border to-transparent" />
+                </div>
                 <EntryResult entry={state.currentDraft} onApprove={handleApprove} />
               </div>
             )}

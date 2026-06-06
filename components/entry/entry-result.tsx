@@ -23,7 +23,7 @@ export function EntryResult({ entry, onApprove }: EntryResultProps) {
       className="space-y-6"
     >
       {/* Summary header */}
-      <div className="rounded-xl border border-border bg-card p-5">
+      <div className="rounded-xl border border-border bg-card/60 p-5 backdrop-blur-sm">
         <div className="flex items-start justify-between gap-4">
           <div>
             <h3 className="text-base font-semibold text-foreground">{entry.productName}</h3>
@@ -51,7 +51,7 @@ export function EntryResult({ entry, onApprove }: EntryResultProps) {
       </div>
 
       {/* Explanation */}
-      <div className="rounded-xl border border-border bg-card p-5">
+      <div className="rounded-xl border border-border bg-card/60 p-5 backdrop-blur-sm">
         <h4 className="text-xs font-semibold text-muted-foreground uppercase tracking-wider mb-2">
           Classification Rationale
         </h4>
@@ -59,7 +59,7 @@ export function EntryResult({ entry, onApprove }: EntryResultProps) {
       </div>
 
       {/* Required docs */}
-      <div className="rounded-xl border border-border bg-card p-5">
+      <div className="rounded-xl border border-border bg-card/60 p-5 backdrop-blur-sm">
         <h4 className="text-xs font-semibold text-muted-foreground uppercase tracking-wider mb-3 flex items-center gap-2">
           <FileText className="w-3.5 h-3.5" />
           Required Documents
