@@ -1,13 +1,26 @@
 import { ClassificationResult } from './types'
 import { mockClassifierResponses } from './mock-data'
 
-function delay(ms: number): Promise<void> {
-  return new Promise(resolve => setTimeout(resolve, ms))
+// Calls the real AI API route; falls back to keyword mock if unavailable
+export async function classifyShipment(input: string): Promise<ClassificationResult> {
+  try {
+    const res = await fetch('/api/classify', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ input }),
+    })
+
+    if (!res.ok) throw new Error(`API ${res.status}`)
+
+    const result: ClassificationResult = await res.json()
+    return result
+  } catch (err) {
+    console.warn('[classifyShipment] AI API failed, falling back to mock:', err)
+    return fallbackClassify(input)
+  }
 }
 
-export async function classifyShipment(input: string): Promise<ClassificationResult> {
-  await delay(400 + Math.random() * 200)
-
+function fallbackClassify(input: string): ClassificationResult {
   const lower = input.toLowerCase()
 
   for (const [pattern, result] of Object.entries(mockClassifierResponses)) {
@@ -17,7 +30,6 @@ export async function classifyShipment(input: string): Promise<ClassificationRes
     }
   }
 
-  // Generic fallback
   return {
     productName: 'General Merchandise',
     htsCode: '9999.00',

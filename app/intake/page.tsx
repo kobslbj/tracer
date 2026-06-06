@@ -8,69 +8,68 @@ import { classifyShipment } from '@/lib/mock-classifier'
 import { insertEntry } from '@/lib/insforge-db'
 import { Entry, AgentStatus } from '@/lib/types'
 import { ShipmentInput } from '@/components/intake/shipment-input'
-import { ReplicaCard } from '@/components/intake/replica-card'
+import { AgentCard } from '@/components/intake/replica-card'
 import { EntryResult } from '@/components/entry/entry-result'
 import { Tag, Calculator, ShieldCheck, FileText } from 'lucide-react'
 
-// Log lines per replica (reference InsForge vector store in HTS lookup)
-const replicaLogs: Record<keyof AgentStatus, string[][]> = {
+const agentLogs: Record<keyof AgentStatus, string[][]> = {
   hts: [
     ['→ Parsing product description...'],
-    ['→ Querying InsForge vector store (hts_knowledge)...', '→ Semantic similarity search on 89k HTS codes...'],
-    ['→ Top match: 8507.60 (cosine 0.94)...', '→ Verifying against Schedule B...'],
-    ['✓ HTS 8507.60 confirmed via pgvector', '✓ GRI classification rules applied'],
+    ['→ Querying InsForge vector store (hts_knowledge)...', '→ Retrieving candidate tariff classifications...'],
+    ['→ Matching chapter headings · verifying Schedule B...'],
+    ['✓ HTS code confirmed · GRI rules applied'],
   ],
   duty: [
-    ['→ Loading HTS 8507.60 duty schedule...'],
+    ['→ Loading duty schedule...'],
     ['→ Checking Section 301 USTR lists (List 3 / List 4A)...', '→ Querying tariff DB...'],
-    ['→ Calculating ad valorem duty...', '→ Applying CIF/FOB incoterm adjustments...'],
-    ['✓ Base duty: 3.4% + Section 301: 25%', '✓ Estimated liability: $4,845'],
+    ['→ Calculating ad valorem duty · applying incoterm adjustments...'],
+    ['✓ Duty rate confirmed · estimated liability calculated'],
   ],
   compliance: [
-    ['→ Screening against CBP CATAIR restrictions...'],
-    ['→ Checking ECCN classification (EAR99)...', '→ FDA / DOT hazmat check...'],
-    ['→ UN38.3 lithium battery transport flag...', '→ MSDS requirement triggered...'],
-    ['✓ Risk: HIGH — review flag set', '✓ Required docs list generated'],
+    ['→ Screening CBP CATAIR restrictions...'],
+    ['→ Checking ECCN · FDA / DOT hazmat flags...'],
+    ['→ Verifying import restrictions · watchlist check...'],
+    ['✓ Risk level assessed · required docs generated'],
   ],
   entry: [
     ['→ Compiling structured entry data...'],
     ['→ Writing to InsForge Postgres (entries table)...', '→ Generating CBP Form 3461 fields...'],
     ['→ Triggering realtime notify_entry_change()...'],
-    ['✓ Entry persisted to InsForge DB', '✓ Realtime channel broadcast complete'],
+    ['✓ Entry persisted to InsForge DB · broadcast complete'],
   ],
 }
 
-interface ReplicaTiming {
+interface AgentTiming {
   agent: keyof AgentStatus
   startDelay: number
   duration: number
 }
 
-const timings: ReplicaTiming[] = [
+const timings: AgentTiming[] = [
   { agent: 'hts', startDelay: 200, duration: 2000 },
   { agent: 'duty', startDelay: 800, duration: 1800 },
   { agent: 'compliance', startDelay: 1200, duration: 2200 },
   { agent: 'entry', startDelay: 3400, duration: 1200 },
 ]
 
-const replicaConfig: Record<keyof AgentStatus, { name: string; description: string; icon: React.ReactNode }> = {
+const agentConfig: Record<keyof AgentStatus, { name: string; description: string; icon: React.ReactNode }> = {
   hts: {
-    name: 'HTS Classification Replica',
-    description: 'Semantic search on InsForge vector store · HTS Schedule B',
+    name: 'Classification Agent',
+    description: 'HTS Schedule B · GRI rules · vector knowledge base',
     icon: <Tag className="w-4 h-4" />,
   },
   duty: {
-    name: 'Duty Estimation Replica',
-    description: 'Section 301 tariff lookups · Ad valorem calculation',
+    name: 'Duty Agent',
+    description: 'Section 301 tariff lookups · ad valorem calculation',
     icon: <Calculator className="w-4 h-4" />,
   },
   compliance: {
-    name: 'Compliance Risk Replica',
+    name: 'Compliance Agent',
     description: 'CBP CATAIR · ECCN · hazmat screening',
     icon: <ShieldCheck className="w-4 h-4" />,
   },
   entry: {
-    name: 'Entry Draft Replica',
+    name: 'Draft Agent',
     description: 'Writes to InsForge Postgres · triggers realtime broadcast',
     icon: <FileText className="w-4 h-4" />,
   },
@@ -86,26 +85,25 @@ export default function IntakePage() {
   const [logLines, setLogLines] = useState<Record<keyof AgentStatus, string[]>>({
     hts: [], duty: [], compliance: [], entry: [],
   })
-  const [showReplicas, setShowReplicas] = useState(false)
+  const [showAgents, setShowAgents] = useState(false)
 
   const appendLog = useCallback((agent: keyof AgentStatus, lines: string[]) => {
     setLogLines(prev => ({ ...prev, [agent]: [...prev[agent], ...lines] }))
   }, [])
 
-  async function runReplicas(input: string) {
+  async function runAgents(input: string) {
     dispatch({ type: 'RESET_AGENTS' })
     dispatch({ type: 'SET_PROCESSING', value: true })
     setLogLines({ hts: [], duty: [], compliance: [], entry: [] })
-    setShowReplicas(true)
+    setShowAgents(true)
 
-    // Fire classification + all 4 replicas in parallel (Promise.all narrative)
     const classifyPromise = classifyShipment(input)
 
     timings.forEach(({ agent, startDelay, duration }) => {
       setTimeout(() => {
         dispatch({ type: 'SET_AGENT_STATUS', agent, phase: 'running' })
 
-        const logBatches = replicaLogs[agent]
+        const logBatches = agentLogs[agent]
         logBatches.forEach((batch, i) => {
           setTimeout(() => appendLog(agent, batch), (duration / logBatches.length) * i)
         })
@@ -156,11 +154,7 @@ export default function IntakePage() {
   async function handleApprove() {
     if (!state.currentDraft) return
     const entry = { ...state.currentDraft, status: 'Review' as const, updatedAt: new Date().toISOString() }
-
-    // Persist to InsForge Postgres first
     await insertEntry(entry)
-
-    // Update local state + navigate
     dispatch({ type: 'APPROVE_ENTRY', entry: state.currentDraft })
     router.push('/dashboard')
   }
@@ -173,15 +167,12 @@ export default function IntakePage() {
     <div className="p-8 max-w-4xl mx-auto">
       <div className="mb-8">
         <h1 className="text-2xl font-bold text-foreground">New Shipment</h1>
-        <p className="text-muted-foreground mt-1">
-          Describe your shipment — four autonomous Replicas will classify, calculate, screen, and draft the entry in parallel.
-        </p>
       </div>
 
-      <ShipmentInput onSubmit={runReplicas} disabled={state.isProcessing} />
+      <ShipmentInput onSubmit={runAgents} disabled={state.isProcessing} />
 
       <AnimatePresence>
-        {showReplicas && (
+        {showAgents && (
           <motion.div
             initial={{ opacity: 0, y: 16 }}
             animate={{ opacity: 1, y: 0 }}
@@ -191,19 +182,19 @@ export default function IntakePage() {
             <div>
               <div className="flex items-center gap-2 mb-4">
                 <h2 className="text-sm font-semibold text-muted-foreground uppercase tracking-wider">
-                  Replica Team
+                  Agent Pipeline
                 </h2>
-                <span className="text-xs text-muted-foreground">· running in parallel via Promise.all</span>
+                <span className="text-xs text-muted-foreground">· running in parallel</span>
               </div>
               <div className="grid grid-cols-2 gap-3">
                 {(['hts', 'duty', 'compliance', 'entry'] as const).map(agent => (
-                  <ReplicaCard
+                  <AgentCard
                     key={agent}
-                    name={replicaConfig[agent].name}
-                    description={replicaConfig[agent].description}
+                    name={agentConfig[agent].name}
+                    description={agentConfig[agent].description}
                     phase={state.agentStatus[agent]}
                     logLines={logLines[agent]}
-                    icon={replicaConfig[agent].icon}
+                    icon={agentConfig[agent].icon}
                   />
                 ))}
               </div>

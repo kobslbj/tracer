@@ -46,7 +46,7 @@ export function ShipmentInput({ onSubmit, disabled }: ShipmentInputProps) {
           className="gap-2 bg-primary text-primary-foreground hover:bg-primary/90"
         >
           <Zap className="w-4 h-4" />
-          Deploy Replica Team
+          Run Agent Pipeline
         </Button>
       </div>
     </div>

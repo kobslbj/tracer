@@ -6,7 +6,7 @@ import { AgentPhase } from '@/lib/types'
 import { AgentLog } from './agent-log'
 import { cn } from '@/lib/utils'
 
-interface ReplicaCardProps {
+interface AgentCardProps {
   name: string
   description: string
   phase: AgentPhase
@@ -14,7 +14,7 @@ interface ReplicaCardProps {
   icon: React.ReactNode
 }
 
-export function ReplicaCard({ name, description, phase, logLines, icon }: ReplicaCardProps) {
+export function AgentCard({ name, description, phase, logLines, icon }: AgentCardProps) {
   const isRunning = phase === 'running'
   const isComplete = phase === 'complete'
   const isError = phase === 'error'
@@ -29,7 +29,6 @@ export function ReplicaCard({ name, description, phase, logLines, icon }: Replic
         phase === 'idle' && 'border-border opacity-50'
       )}
     >
-      {/* Pulse ring when running */}
       {isRunning && (
         <motion.div
           className="absolute inset-0 rounded-xl border-2 border-primary/30"

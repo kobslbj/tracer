@@ -90,7 +90,6 @@ export default function DashboardPage() {
             Live
           </div>
         </div>
-        <p className="text-muted-foreground mt-1">InsForge Realtime · Postgres-backed · auto-progression</p>
       </div>
 
       {/* Stats */}

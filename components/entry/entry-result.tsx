@@ -95,7 +95,7 @@ export function EntryResult({ entry, onApprove }: EntryResultProps) {
         <EntryDraftCard entry={entry} />
         <div className="flex flex-col gap-3 pt-1">
           <p className="text-sm text-muted-foreground leading-relaxed">
-            Review the Replica-drafted entry. Once approved, it persists to InsForge Postgres and appears live on the dashboard via Realtime.
+            Review the AI-drafted entry. Once approved, it persists to InsForge Postgres and appears live on the dashboard via Realtime.
           </p>
           <Button
             onClick={onApprove}
