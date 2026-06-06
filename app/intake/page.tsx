@@ -133,10 +133,19 @@ export default function IntakePage() {
     }
   }
 
+  const [approveError, setApproveError] = useState<string | null>(null)
+
   async function handleApprove() {
     if (!state.currentDraft) return
     const entry = { ...state.currentDraft, status: 'Review' as const, updatedAt: new Date().toISOString() }
-    await insertEntry(entry)
+    setApproveError(null)
+    try {
+      await insertEntry(entry)
+    } catch (err) {
+      console.error('[handleApprove] failed to persist entry:', err)
+      setApproveError('Failed to file entry to InsForge. Please try again.')
+      return
+    }
     dispatch({ type: 'APPROVE_ENTRY', entry: state.currentDraft })
     router.push('/dashboard')
   }
@@ -191,6 +200,11 @@ export default function IntakePage() {
                   <span className="h-px flex-1 bg-linear-to-r from-border to-transparent" />
                 </div>
                 <EntryResult entry={state.currentDraft} onApprove={handleApprove} />
+                {approveError && (
+                  <p className="mt-3 rounded-lg border border-red-800/50 bg-red-950/30 px-3 py-2 text-xs text-red-300">
+                    {approveError}
+                  </p>
+                )}
               </div>
             )}
           </motion.div>

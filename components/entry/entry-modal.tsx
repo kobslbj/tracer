@@ -6,6 +6,7 @@ import {
   DialogContent,
   DialogHeader,
   DialogTitle,
+  DialogDescription,
 } from '@/components/ui/dialog'
 import { Badge } from '@/components/ui/badge'
 import { RiskBadge, StatusBadge } from '@/components/dashboard/status-badge'
@@ -117,7 +118,7 @@ export function EntryModal({ entry, open, onClose }: EntryModalProps) {
               <DialogTitle className="mt-1 text-lg font-semibold text-foreground">
                 {entry.productName}
               </DialogTitle>
-              <p className="mt-0.5 text-sm text-muted-foreground line-clamp-2">{entry.description}</p>
+              <DialogDescription className="mt-0.5 line-clamp-2">{entry.description}</DialogDescription>
             </div>
             <div className="flex shrink-0 flex-col items-end gap-1.5">
               <RiskBadge risk={entry.riskLevel} />

@@ -38,7 +38,7 @@ export async function fetchEntries(): Promise<Entry[]> {
 }
 
 export async function insertEntry(entry: Entry): Promise<void> {
-  await insforge.database.from('entries').insert([{
+  const { error } = await insforge.database.from('entries').insert([{
     id: entry.id,
     entry_no: entry.entryNo,
     port: entry.port,
@@ -60,6 +60,7 @@ export async function insertEntry(entry: Entry): Promise<void> {
     created_at: entry.createdAt,
     updated_at: entry.updatedAt,
   }])
+  if (error) throw error
 }
 
 export async function updateEntryStatus(id: string, status: Entry['status']): Promise<void> {

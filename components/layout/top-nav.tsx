@@ -24,7 +24,7 @@ export function TopNav() {
       <div className="mx-auto flex h-14 max-w-6xl items-center gap-6 px-6">
         {/* Brand */}
         <Link href="/intake" className="flex items-center gap-2 shrink-0">
-          <Image src="/logo.png" alt="Tracer" width={28} height={28} className="rounded-sm" />
+          <Image src="/tracerlogo.png" alt="Tracer" width={28} height={28} className="rounded-sm" />
           <span className="text-[15px] font-semibold tracking-tight">Tracer</span>
         </Link>
 
