@@ -31,7 +31,7 @@ export async function POST(req: NextRequest) {
 
     const logs: string[] = []
     logs.push('→ Loading duty schedule...')
-    logs.push('→ Checking Section 301 USTR lists (List 3 / List 4A)...')
+    logs.push(`→ Evaluating country of origin (${originCountry}) against Section 301 tariff lists...`)
 
     let result: Record<string, unknown>
     try {
@@ -45,6 +45,11 @@ export async function POST(req: NextRequest) {
       return NextResponse.json({ error: 'AI service error' }, { status: 500 })
     }
 
+    if (result.section301Applied) {
+      logs.push(`→ Section 301 surcharge applies to ${originCountry} origin · adding to base rate...`)
+    } else {
+      logs.push(`→ Confirmed Section 301 exemption for ${originCountry} origin (non-China)...`)
+    }
     logs.push('→ Calculating ad valorem duty · applying incoterm adjustments...')
     logs.push('✓ Duty rate confirmed · estimated liability calculated')
     return NextResponse.json({ ...result, logs })
