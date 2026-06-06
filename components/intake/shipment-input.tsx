@@ -12,10 +12,19 @@ interface ShipmentInputProps {
 const PLACEHOLDER =
   'Describe your shipment in natural language — e.g. "500 units of lithium battery cells from Shenzhen, China, FOB $28,500, arriving LAX"'
 
-const EXAMPLES = [
-  'Cotton knit t-shirts, 2000 pcs, Bangladesh, CIF $12,000, JFK',
-  'Aluminum extruded profiles from Vietnam, 3 tons, FOB $9,800, SEA',
-  'LED light panels, 5000 units, China origin, $42,000, LAX',
+const EXAMPLES: { label: string; value: string }[] = [
+  {
+    label: 'Taiwan PCBs → LAX',
+    value: '3,000 multilayer printed circuit boards manufactured in Taiwan for a US networking OEM, FOB Kaohsiung $46,000, arriving LAX',
+  },
+  {
+    label: 'Taiwan semiconductors → SEA',
+    value: '5,000 microcontroller ICs from a Taiwan foundry, FOB Hsinchu $120,000, arriving SEA',
+  },
+  {
+    label: 'Taiwan aluminum enclosures → LAX',
+    value: 'Aluminum CNC-machined enclosures, contract-manufactured in Taiwan, 2 tons, FOB Taichung $18,500, arriving LAX',
+  },
 ]
 
 export function ShipmentInput({ onSubmit, disabled }: ShipmentInputProps) {
@@ -82,11 +91,12 @@ export function ShipmentInput({ onSubmit, disabled }: ShipmentInputProps) {
       <div className="flex flex-wrap gap-2">
         {EXAMPLES.map(ex => (
           <button
-            key={ex}
+            key={ex.label}
             type="button"
+            title={ex.value}
             disabled={disabled}
             onClick={() => {
-              setValue(ex)
+              setValue(ex.value)
               const el = ref.current
               if (el) {
                 el.focus()
@@ -95,7 +105,7 @@ export function ShipmentInput({ onSubmit, disabled }: ShipmentInputProps) {
             }}
             className="rounded-full border border-border/70 bg-card/40 px-2.5 py-1 text-xs text-muted-foreground transition-colors hover:border-primary/40 hover:text-foreground disabled:opacity-40"
           >
-            {ex}
+            {ex.label}
           </button>
         ))}
       </div>
