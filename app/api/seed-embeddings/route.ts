@@ -1,6 +1,6 @@
 import { NextResponse } from 'next/server'
 import { createAdminClient } from '@insforge/sdk'
-import { embed } from '@/lib/embeddings'
+import { embed } from '@/lib/ai'
 
 const admin = createAdminClient({
   baseUrl: process.env.NEXT_PUBLIC_INSFORGE_URL!,

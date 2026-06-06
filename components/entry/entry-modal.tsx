@@ -9,7 +9,8 @@ import {
 } from '@/components/ui/dialog'
 import { Badge } from '@/components/ui/badge'
 import { RiskBadge, StatusBadge } from '@/components/dashboard/status-badge'
-import { FileText, Package, DollarSign, Tag } from 'lucide-react'
+import { FileText, DollarSign, Tag } from 'lucide-react'
+import { cn } from '@/lib/utils'
 
 interface EntryModalProps {
   entry: Entry | null
@@ -43,6 +44,61 @@ function FieldRow({ label, value }: { label: string; value: string | number }) {
   )
 }
 
+const STATUS_FLOW = [
+  { key: 'Draft', desc: 'AI-drafted, not yet approved' },
+  { key: 'Review', desc: 'Awaiting broker approval' },
+  { key: 'Filing', desc: 'Submitting to CBP' },
+  { key: 'Cleared', desc: 'Released by customs' },
+] as const
+
+function StatusFlow({ status }: { status: Entry['status'] }) {
+  const currentIdx = STATUS_FLOW.findIndex(s => s.key === status)
+  const current = STATUS_FLOW[Math.max(currentIdx, 0)]
+  const next = STATUS_FLOW[currentIdx + 1]
+
+  return (
+    <div className="mb-5 rounded-lg border border-border bg-muted/10 p-4">
+      <div className="mb-3 flex items-center gap-2">
+        {STATUS_FLOW.map((s, i) => {
+          const done = i < currentIdx
+          const active = i === currentIdx
+          return (
+            <div key={s.key} className="flex flex-1 items-center gap-2 last:flex-none">
+              <div className="flex items-center gap-1.5">
+                <span
+                  className={cn(
+                    'h-2 w-2 rounded-full transition-colors',
+                    done && 'bg-emerald-400/70',
+                    active && 'bg-primary shadow-[0_0_8px_-1px_var(--color-primary)]',
+                    !done && !active && 'bg-muted-foreground/30'
+                  )}
+                />
+                <span
+                  className={cn(
+                    'text-xs font-medium',
+                    active ? 'text-foreground' : 'text-muted-foreground'
+                  )}
+                >
+                  {s.key}
+                </span>
+              </div>
+              {i < STATUS_FLOW.length - 1 && (
+                <span className={cn('h-px flex-1', done ? 'bg-emerald-400/40' : 'bg-border')} />
+              )}
+            </div>
+          )
+        })}
+      </div>
+      <p className="text-xs text-muted-foreground">
+        {current.desc}
+        {next && (
+          <span className="text-muted-foreground/60"> · next: {next.key}</span>
+        )}
+      </p>
+    </div>
+  )
+}
+
 export function EntryModal({ entry, open, onClose }: EntryModalProps) {
   if (!entry) return null
 
@@ -72,6 +128,9 @@ export function EntryModal({ entry, open, onClose }: EntryModalProps) {
 
         {/* Body */}
         <div className="overflow-y-auto px-6 py-5" style={{ maxHeight: 'calc(85vh - 140px)' }}>
+          {/* Status flow */}
+          <StatusFlow status={entry.status} />
+
           {/* Key metrics */}
           <div className="mb-5 grid grid-cols-3 gap-3">
             <MetricCard

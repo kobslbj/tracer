@@ -1,10 +1,10 @@
 'use client'
 
 import Link from 'next/link'
+import Image from 'next/image'
 import { usePathname } from 'next/navigation'
 import { useStore } from '@/lib/store'
 import { cn } from '@/lib/utils'
-import { Activity } from 'lucide-react'
 
 const navItems = [
   { href: '/intake', label: 'New Shipment' },
@@ -23,10 +23,8 @@ export function TopNav() {
     <header className="sticky top-0 z-40 border-b border-border/70 bg-background/70 backdrop-blur-xl">
       <div className="mx-auto flex h-14 max-w-6xl items-center gap-6 px-6">
         {/* Brand */}
-        <Link href="/intake" className="flex items-center gap-2.5 shrink-0">
-          <div className="flex h-6 w-6 items-center justify-center rounded-md bg-linear-to-br from-primary to-primary/60 shadow-[0_0_12px_-2px_var(--color-primary)]">
-            <Activity className="h-3.5 w-3.5 text-primary-foreground" strokeWidth={2.5} />
-          </div>
+        <Link href="/intake" className="flex items-center gap-2 shrink-0">
+          <Image src="/logo.png" alt="Tracer" width={28} height={28} className="rounded-sm" />
           <span className="text-[15px] font-semibold tracking-tight">Tracer</span>
         </Link>
 

@@ -1,4 +1,5 @@
 import { NextRequest, NextResponse } from 'next/server'
+import { chatJSON } from '@/lib/ai'
 
 const SYSTEM_PROMPT = `You are a US customs duty calculation specialist. Given HTS code, origin country, shipment value, and incoterm, calculate the applicable duty rate and estimated duty. Respond with valid JSON only — no markdown, no explanation.
 
@@ -32,44 +33,16 @@ export async function POST(req: NextRequest) {
     logs.push('→ Loading duty schedule...')
     logs.push('→ Checking Section 301 USTR lists (List 3 / List 4A)...')
 
-    const response = await fetch('https://openrouter.ai/api/v1/chat/completions', {
-      method: 'POST',
-      headers: {
-        'Authorization': `Bearer ${process.env.OPENROUTER_API_KEY}`,
-        'Content-Type': 'application/json',
-        'HTTP-Referer': 'https://traceer.app',
-        'X-Title': 'Traceer Customs Operations',
-      },
-      body: JSON.stringify({
-        model: 'anthropic/claude-sonnet-4-5',
-        messages: [
-          { role: 'system', content: SYSTEM_PROMPT },
-          {
-            role: 'user',
-            content: `Calculate duty for:\nHTS Code: ${htsCode}\nOrigin Country: ${originCountry}\nValue: $${valueUsd} USD\nIncoterm: ${incoterm}`,
-          },
-        ],
-        max_tokens: 256,
-        temperature: 0.1,
-      }),
-    })
-
-    if (!response.ok) {
-      const errText = await response.text()
-      console.error('[agents/duty] OpenRouter error:', response.status, errText)
-      return NextResponse.json({ error: 'AI service error' }, { status: 500 })
-    }
-
-    const data = await response.json()
-    const text: string = data.choices?.[0]?.message?.content ?? ''
-    const cleaned = text.replace(/^```(?:json)?\n?/i, '').replace(/\n?```$/i, '').trim()
-
     let result: Record<string, unknown>
     try {
-      result = JSON.parse(cleaned)
-    } catch {
-      console.error('[agents/duty] JSON parse failed:', cleaned)
-      return NextResponse.json({ error: 'Failed to parse AI response' }, { status: 500 })
+      result = await chatJSON({
+        system: SYSTEM_PROMPT,
+        user: `Calculate duty for:\nHTS Code: ${htsCode}\nOrigin Country: ${originCountry}\nValue: $${valueUsd} USD\nIncoterm: ${incoterm}`,
+        maxTokens: 256,
+      })
+    } catch (err) {
+      console.error('[agents/duty] model gateway error:', err)
+      return NextResponse.json({ error: 'AI service error' }, { status: 500 })
     }
 
     logs.push('→ Calculating ad valorem duty · applying incoterm adjustments...')

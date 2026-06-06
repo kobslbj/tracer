@@ -5,7 +5,7 @@ import { useRouter } from 'next/navigation'
 import { motion, AnimatePresence } from 'framer-motion'
 import { useStore } from '@/lib/store'
 import { insertEntry } from '@/lib/insforge-db'
-import { Entry, AgentStatus } from '@/lib/types'
+import { Entry, AgentStatus, AgentPhase, RiskLevel } from '@/lib/types'
 import { ShipmentInput } from '@/components/intake/shipment-input'
 import { AgentPipeline, PipelineAgent } from '@/components/intake/agent-pipeline'
 import { EntryResult } from '@/components/entry/entry-result'
@@ -54,7 +54,9 @@ export default function IntakePage() {
     })
     if (!res.ok) {
       const err = await res.json().catch(() => ({ error: res.statusText }))
-      throw new Error(err.error ?? `${url} failed with ${res.status}`)
+      const message = err.error ?? `${url} failed with ${res.status}`
+      appendLog(agent, [`✗ ${message}`])
+      throw new Error(message)
     }
     const data = await res.json()
     if (data.logs?.length) appendLog(agent, data.logs)
@@ -67,38 +69,46 @@ export default function IntakePage() {
     setLogLines({ hts: [], duty: [], compliance: [], entry: [] })
     setShowAgents(true)
 
+    // Track phases locally so the catch handler can fail in-flight agents
+    // without depending on a stale state closure.
+    const localPhase: Record<keyof AgentStatus, AgentPhase> = {
+      hts: 'idle', duty: 'idle', compliance: 'idle', entry: 'idle',
+    }
+    const setPhase = (agent: keyof AgentStatus, phase: AgentPhase) => {
+      localPhase[agent] = phase
+      dispatch({ type: 'SET_AGENT_STATUS', agent, phase })
+    }
+
     try {
       // 1. HTS Classification (sequential — duty & compliance depend on it)
-      dispatch({ type: 'SET_AGENT_STATUS', agent: 'hts', phase: 'running' })
+      setPhase('hts', 'running')
       const classify = await callAgent<{
         htsCode: string; productName: string; description: string
         originCountry: string; port: 'LAX' | 'JFK' | 'SEA'
         quantity: number; valueUsd: number; incoterm: string
       }>('/api/agents/classify', { input }, 'hts')
-      dispatch({ type: 'SET_AGENT_STATUS', agent: 'hts', phase: 'complete' })
+      setPhase('hts', 'complete')
 
       // 2. Duty + Compliance in parallel
-      dispatch({ type: 'SET_AGENT_STATUS', agent: 'duty', phase: 'running' })
-      dispatch({ type: 'SET_AGENT_STATUS', agent: 'compliance', phase: 'running' })
+      setPhase('duty', 'running')
+      setPhase('compliance', 'running')
       const [duty, compliance] = await Promise.all([
         callAgent<{ dutyRate: number; estimatedDutyUsd: number; dutyBasis: string }>('/api/agents/duty', {
           htsCode: classify.htsCode,
           originCountry: classify.originCountry,
           valueUsd: classify.valueUsd,
           incoterm: classify.incoterm,
-        }, 'duty'),
-        callAgent<{ riskLevel: string; reviewRequired: boolean; reviewReason: string; requiredDocs: string[]; explanation: string }>('/api/agents/compliance', {
+        }, 'duty').then(r => { setPhase('duty', 'complete'); return r }),
+        callAgent<{ riskLevel: RiskLevel; reviewRequired: boolean; reviewReason: string; requiredDocs: string[]; explanation: string }>('/api/agents/compliance', {
           htsCode: classify.htsCode,
           originCountry: classify.originCountry,
           productName: classify.productName,
           description: classify.description,
-        }, 'compliance'),
+        }, 'compliance').then(r => { setPhase('compliance', 'complete'); return r }),
       ])
-      dispatch({ type: 'SET_AGENT_STATUS', agent: 'duty', phase: 'complete' })
-      dispatch({ type: 'SET_AGENT_STATUS', agent: 'compliance', phase: 'complete' })
 
       // 3. Draft assembly
-      dispatch({ type: 'SET_AGENT_STATUS', agent: 'entry', phase: 'running' })
+      setPhase('entry', 'running')
       const { draft } = await callAgent<{ draft: Entry }>('/api/agents/draft', {
         ...classify,
         dutyRate: duty.dutyRate,
@@ -109,11 +119,15 @@ export default function IntakePage() {
         requiredDocs: compliance.requiredDocs,
         explanation: compliance.explanation,
       }, 'entry')
-      dispatch({ type: 'SET_AGENT_STATUS', agent: 'entry', phase: 'complete' })
+      setPhase('entry', 'complete')
 
       dispatch({ type: 'SET_DRAFT', draft })
     } catch (err) {
       console.error('[runAgents]', err)
+      // Mark any in-flight agent as errored so the UI stops spinning.
+      ;(['hts', 'duty', 'compliance', 'entry'] as const).forEach(agent => {
+        if (localPhase[agent] === 'running') setPhase(agent, 'error')
+      })
     } finally {
       dispatch({ type: 'SET_PROCESSING', value: false })
     }
@@ -142,7 +156,7 @@ export default function IntakePage() {
   return (
     <div className="mx-auto max-w-3xl px-6 py-12">
       <div className="mb-8">
-        <h1 className="text-2xl font-semibold tracking-tight text-foreground">New Shipment</h1>
+        <h1 className="text-2xl font-semibold tracking-tight text-foreground">Autonomous customs operations for brokers</h1>
         <p className="mt-1.5 text-sm text-muted-foreground">
           Describe a shipment and let the AI agent pipeline classify, price duty, screen compliance and draft the CBP entry.
         </p>

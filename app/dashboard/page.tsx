@@ -123,6 +123,24 @@ export default function DashboardPage() {
         ))}
       </div>
 
+      {/* Status legend */}
+      <div className="mb-3 flex flex-wrap items-center gap-x-5 gap-y-2 px-1">
+        <span className="text-xs font-medium uppercase tracking-wider text-muted-foreground">Status flow</span>
+        {[
+          { dot: 'bg-zinc-400', label: 'Draft', desc: 'AI-drafted, not yet approved' },
+          { dot: 'bg-amber-400', label: 'Review', desc: 'Awaiting broker approval' },
+          { dot: 'bg-blue-400', label: 'Filing', desc: 'Submitting to CBP' },
+          { dot: 'bg-emerald-400', label: 'Cleared', desc: 'Released by customs' },
+        ].map((s, i, arr) => (
+          <div key={s.label} className="flex items-center gap-1.5">
+            <span className={`h-1.5 w-1.5 rounded-full ${s.dot}`} />
+            <span className="text-xs font-medium text-foreground">{s.label}</span>
+            <span className="text-xs text-muted-foreground">· {s.desc}</span>
+            {i < arr.length - 1 && <span className="ml-3 text-muted-foreground/40">→</span>}
+          </div>
+        ))}
+      </div>
+
       <EntriesTable entries={state.entries} newEntryId={newEntryId} onRowClick={setSelectedEntry} />
 
       <EntryModal

@@ -21,8 +21,8 @@ export async function POST(req: NextRequest) {
 
     const logs: string[] = []
     logs.push('→ Compiling structured entry data...')
-    logs.push('→ Writing to InsForge Postgres (entries table)...')
     logs.push('→ Generating CBP Form 3461 fields...')
+    logs.push('→ Awaiting broker approval before filing...')
 
     const now = new Date().toISOString()
     const draft: Entry = {
@@ -41,14 +41,14 @@ export async function POST(req: NextRequest) {
       riskLevel: riskLevel ?? 'Low',
       reviewRequired: reviewRequired ?? false,
       reviewReason: reviewReason ?? '',
-      status: 'Draft',
+      status: 'Draft' as const,
       requiredDocs: requiredDocs ?? [],
       explanation: explanation ?? '',
       createdAt: now,
       updatedAt: now,
     }
 
-    logs.push('✓ Entry persisted to InsForge DB · broadcast complete')
+    logs.push('✓ Draft entry assembled · ready for review')
     return NextResponse.json({ draft, logs })
   } catch (err) {
     console.error('[agents/draft]', err)
