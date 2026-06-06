@@ -105,7 +105,7 @@ export function EntryModal({ entry, open, onClose }: EntryModalProps) {
 
   return (
     <Dialog open={open} onOpenChange={v => !v && onClose()}>
-      <DialogContent className="max-w-3xl border-border bg-card p-0">
+      <DialogContent className="max-w-4xl sm:max-w-4xl border-border bg-card p-0">
         {/* Header */}
         <DialogHeader className="border-b border-border px-6 py-5">
           <div className="flex items-start justify-between gap-4 pr-6">
