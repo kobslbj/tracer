@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from 'next/server'
-import { Entry } from '@/lib/types'
+import { Entry, UploadedDocs } from '@/lib/types'
 
 function generateEntryNo() {
   return `ENT-${Math.floor(49300 + Math.random() * 1000)}`
@@ -13,6 +13,7 @@ export async function POST(req: NextRequest) {
       quantity, valueUsd, incoterm,
       dutyRate, estimatedDutyUsd,
       riskLevel, reviewRequired, reviewReason, requiredDocs, explanation,
+      uploadedDocs,
     } = body
 
     if (!htsCode || !productName) {
@@ -44,6 +45,7 @@ export async function POST(req: NextRequest) {
       status: 'Draft' as const,
       requiredDocs: requiredDocs ?? [],
       explanation: explanation ?? '',
+      uploadedDocs: (uploadedDocs as UploadedDocs) ?? undefined,
       createdAt: now,
       updatedAt: now,
     }

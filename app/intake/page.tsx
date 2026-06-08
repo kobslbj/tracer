@@ -5,6 +5,7 @@ import { useRouter } from 'next/navigation'
 import { motion, AnimatePresence } from 'framer-motion'
 import { useStore } from '@/lib/store'
 import { insertEntry } from '@/lib/insforge-db'
+import { docFileMetaToUploaded } from '@/lib/doc-links'
 import {
   Entry, AgentStatus, AgentPhase, RiskLevel,
   DocType, ExtractedDoc, ReconcileResult, DocFileMeta,
@@ -85,6 +86,7 @@ export default function IntakePage() {
   const [docError, setDocError] = useState<string | null>(null)
   const [extracted, setExtracted] = useState<{ packingList: ExtractedDoc; invoice: ExtractedDoc } | null>(null)
   const [reconcile, setReconcile] = useState<ReconcileResult | null>(null)
+  const [uploadedFiles, setUploadedFiles] = useState<DocFileMeta | null>(null)
 
   const pushDocLog = useCallback((line: string) => {
     setDocLogs(prev => [...prev, line])
@@ -117,7 +119,7 @@ export default function IntakePage() {
     return data as T
   }
 
-  async function runAgents(input: string) {
+  async function runAgents(input: string, files?: DocFileMeta) {
     dispatch({ type: 'RESET_AGENTS' })
     dispatch({ type: 'SET_PROCESSING', value: true })
     setLogLines({ hts: [], duty: [], compliance: [], entry: [] })
@@ -167,6 +169,7 @@ export default function IntakePage() {
         reviewReason: compliance.reviewReason,
         requiredDocs: compliance.requiredDocs,
         explanation: compliance.explanation,
+        uploadedDocs: files ? docFileMetaToUploaded(files) : undefined,
       }, 'entry')
       setPhase('entry', 'complete')
 
@@ -224,6 +227,7 @@ export default function IntakePage() {
     setDocLogs([])
     setExtracted(null)
     setReconcile(null)
+    setUploadedFiles(null)
 
     try {
       pushDocLog('→ Uploading documents to InsForge Storage...')
@@ -267,6 +271,7 @@ export default function IntakePage() {
       const persistData = await persistRes.json()
       if (persistData.logs?.length) persistData.logs.forEach((l: string) => pushDocLog(l))
 
+      setUploadedFiles(fileMeta)
       setDocPhase('done')
     } catch (err) {
       console.error('[runDocumentFlow]', err)
@@ -278,7 +283,7 @@ export default function IntakePage() {
   function runPipelineFromDocs() {
     if (!extracted) return
     const description = buildShipmentDescription(extracted.packingList, extracted.invoice)
-    runAgents(description)
+    runAgents(description, uploadedFiles ?? undefined)
   }
 
   // ── Approve & file ─────────────────────────────────────────────────────────

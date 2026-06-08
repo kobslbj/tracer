@@ -1,5 +1,5 @@
 import { insforge } from './insforge'
-import { Entry, ExtractedDoc, ReconcileResult, DocFileMeta } from './types'
+import { Entry, ExtractedDoc, ReconcileResult, DocFileMeta, UploadedDocs } from './types'
 
 // Map DB row (snake_case) → Entry (camelCase)
 function rowToEntry(row: Record<string, unknown>): Entry {
@@ -22,6 +22,7 @@ function rowToEntry(row: Record<string, unknown>): Entry {
     status: row.status as Entry['status'],
     requiredDocs: row.required_docs as string[],
     explanation: row.explanation as string,
+    uploadedDocs: (row.uploaded_docs as UploadedDocs) ?? undefined,
     createdAt: row.created_at as string,
     updatedAt: row.updated_at as string,
   }
@@ -57,6 +58,7 @@ export async function insertEntry(entry: Entry): Promise<void> {
     status: entry.status,
     required_docs: entry.requiredDocs,
     explanation: entry.explanation,
+    uploaded_docs: entry.uploadedDocs ?? {},
     created_at: entry.createdAt,
     updated_at: entry.updatedAt,
   }])

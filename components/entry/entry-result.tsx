@@ -4,7 +4,7 @@ import { motion } from 'framer-motion'
 import { Entry } from '@/lib/types'
 import { EntryDraftCard } from './entry-draft-card'
 import { RiskBadge } from '@/components/dashboard/status-badge'
-import { Badge } from '@/components/ui/badge'
+import { RequiredDocBadge } from './required-doc-badge'
 import { Button } from '@/components/ui/button'
 import { Separator } from '@/components/ui/separator'
 import { CheckCircle, FileText, ArrowRight } from 'lucide-react'
@@ -66,13 +66,7 @@ export function EntryResult({ entry, onApprove }: EntryResultProps) {
         </h4>
         <div className="flex flex-wrap gap-2">
           {entry.requiredDocs.map(doc => (
-            <Badge
-              key={doc}
-              variant="outline"
-              className="text-xs bg-muted/50 border-border text-foreground"
-            >
-              {doc}
-            </Badge>
+            <RequiredDocBadge key={doc} name={doc} uploadedDocs={entry.uploadedDocs} />
           ))}
         </div>
       </div>

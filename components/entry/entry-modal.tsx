@@ -8,7 +8,7 @@ import {
   DialogTitle,
   DialogDescription,
 } from '@/components/ui/dialog'
-import { Badge } from '@/components/ui/badge'
+import { RequiredDocBadge } from './required-doc-badge'
 import { RiskBadge, StatusBadge } from '@/components/dashboard/status-badge'
 import { FileText, DollarSign, Tag } from 'lucide-react'
 import { cn } from '@/lib/utils'
@@ -186,9 +186,7 @@ export function EntryModal({ entry, open, onClose }: EntryModalProps) {
               </p>
               <div className="flex flex-wrap gap-2">
                 {entry.requiredDocs.map(doc => (
-                  <Badge key={doc} variant="outline" className="border-border bg-muted/50 text-xs text-foreground">
-                    {doc}
-                  </Badge>
+                  <RequiredDocBadge key={doc} name={doc} uploadedDocs={entry.uploadedDocs} />
                 ))}
               </div>
             </div>
