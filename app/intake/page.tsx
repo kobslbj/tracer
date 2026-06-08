@@ -6,6 +6,7 @@ import { motion, AnimatePresence } from 'framer-motion'
 import { useStore } from '@/lib/store'
 import { insertEntry } from '@/lib/insforge-db'
 import { docFileMetaToUploaded } from '@/lib/doc-links'
+import { entryOverridesFromDocs } from '@/lib/entry-from-docs'
 import {
   Entry, AgentStatus, AgentPhase, RiskLevel,
   DocType, ExtractedDoc, ReconcileResult, DocFileMeta,
@@ -55,21 +56,30 @@ function readAsDataUrl(file: File): Promise<string> {
 
 function buildShipmentDescription(pl: ExtractedDoc, inv: ExtractedDoc): string {
   const supplier = inv.supplier ?? pl.supplier ?? 'an overseas supplier'
-  const coo = pl.coo ?? inv.coo ?? 'an unspecified country'
+  const product = inv.productDescription ?? pl.productDescription
+  const coo = pl.productDescription?.match(/south africa/i) ? 'South Africa'
+    : pl.portOfLoading?.match(/south africa/i) ? 'South Africa'
+    : pl.coo ?? inv.coo ?? 'an unspecified country'
   const importer = inv.importer ?? pl.importer
-  const qty = pl.quantity ?? inv.quantity
-  const sku = pl.skuCount ?? inv.skuCount
-  const weight = pl.grossWeightKg ?? inv.grossWeightKg
+  const weight = pl.grossWeightKg ?? pl.netWeightKg ?? inv.grossWeightKg
   const value = inv.totalValue ?? pl.totalValue
   const currency = inv.currency ?? pl.currency ?? 'USD'
+  const qtyMt = inv.quantityUnit === 'MT' ? inv.quantity
+    : pl.packUnitKg && pl.quantity ? (pl.quantity * pl.packUnitKg) / 1000
+    : pl.grossWeightKg ? pl.grossWeightKg / 1000
+    : null
 
   const parts = [
-    `Shipment from ${supplier}, country of origin ${coo}`,
+    product ?? `Shipment from ${supplier}`,
+    `country of origin ${coo}`,
     importer ? `imported by ${importer}` : null,
-    qty != null ? `${qty.toLocaleString()} units` : null,
-    sku != null ? `across ${sku} SKUs` : null,
-    weight != null ? `gross weight ${weight} kg` : null,
+    qtyMt != null ? `${qtyMt} MT` : null,
+    weight != null ? `gross weight ${weight.toLocaleString()} kg` : null,
     value != null ? `total declared value ${currency} ${value.toLocaleString()}` : null,
+    inv.portOfDischarge ?? pl.portOfDischarge
+      ? `port of discharge ${inv.portOfDischarge ?? pl.portOfDischarge}`
+      : null,
+    inv.incoterm ?? pl.incoterm ? `incoterm ${inv.incoterm ?? pl.incoterm}` : null,
   ].filter(Boolean)
 
   return parts.join(', ') + '.'
@@ -119,7 +129,11 @@ export default function IntakePage() {
     return data as T
   }
 
-  async function runAgents(input: string, files?: DocFileMeta) {
+  async function runAgents(
+    input: string,
+    files?: DocFileMeta,
+    docCtx?: { packingList: ExtractedDoc; invoice: ExtractedDoc; reconcile: ReconcileResult },
+  ) {
     dispatch({ type: 'RESET_AGENTS' })
     dispatch({ type: 'SET_PROCESSING', value: true })
     setLogLines({ hts: [], duty: [], compliance: [], entry: [] })
@@ -160,8 +174,10 @@ export default function IntakePage() {
       ])
 
       setPhase('entry', 'running')
+      const docOverrides = docCtx ? entryOverridesFromDocs(docCtx.packingList, docCtx.invoice, docCtx.reconcile) : {}
       const { draft } = await callAgent<{ draft: Entry }>('/api/agents/draft', {
         ...classify,
+        ...docOverrides,
         dutyRate: duty.dutyRate,
         estimatedDutyUsd: duty.estimatedDutyUsd,
         riskLevel: compliance.riskLevel,
@@ -283,7 +299,11 @@ export default function IntakePage() {
   function runPipelineFromDocs() {
     if (!extracted) return
     const description = buildShipmentDescription(extracted.packingList, extracted.invoice)
-    runAgents(description, uploadedFiles ?? undefined)
+    runAgents(description, uploadedFiles ?? undefined, {
+      packingList: extracted.packingList,
+      invoice: extracted.invoice,
+      reconcile: reconcile!,
+    })
   }
 
   // ── Approve & file ─────────────────────────────────────────────────────────

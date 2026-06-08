@@ -29,7 +29,7 @@ export function EntriesTable({ entries, newEntryId, onRowClick }: EntriesTablePr
         <TableHeader>
           <TableRow className="border-border bg-muted/30 hover:bg-transparent">
             <TableHead className="text-muted-foreground font-medium">Entry No.</TableHead>
-            <TableHead className="text-muted-foreground font-medium">Port</TableHead>
+            <TableHead className="text-muted-foreground font-medium">Discharge Port</TableHead>
             <TableHead className="text-muted-foreground font-medium">Product</TableHead>
             <TableHead className="text-muted-foreground font-medium">HTS Code</TableHead>
             <TableHead className="text-muted-foreground font-medium">Value</TableHead>
@@ -53,7 +53,9 @@ export function EntriesTable({ entries, newEntryId, onRowClick }: EntriesTablePr
                 <TableCell className="font-mono text-sm font-medium text-foreground">
                   {entry.entryNo}
                 </TableCell>
-                <TableCell className="text-sm text-muted-foreground">{entry.port}</TableCell>
+                <TableCell className="text-sm text-muted-foreground max-w-[140px] truncate" title={entry.portOfDischarge ?? entry.port}>
+                  {entry.portOfDischarge ?? entry.port}
+                </TableCell>
                 <TableCell className="text-sm text-foreground max-w-[180px] truncate">
                   {entry.productName}
                 </TableCell>

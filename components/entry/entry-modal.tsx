@@ -113,7 +113,7 @@ export function EntryModal({ entry, open, onClose }: EntryModalProps) {
               <div className="flex items-center gap-2">
                 <span className="font-mono text-xs text-muted-foreground">{entry.entryNo}</span>
                 <span className="text-muted-foreground/40">·</span>
-                <span className="text-xs text-muted-foreground">{entry.port}</span>
+                <span className="text-xs text-muted-foreground">{entry.portOfDischarge ?? entry.port}</span>
               </div>
               <DialogTitle className="mt-1 text-lg font-semibold text-foreground">
                 {entry.productName}
@@ -160,7 +160,10 @@ export function EntryModal({ entry, open, onClose }: EntryModalProps) {
                 Shipment Details
               </p>
               <FieldRow label="Origin Country" value={entry.originCountry} />
-              <FieldRow label="Port of Entry" value={entry.port} />
+              <FieldRow label="Discharge Port" value={entry.portOfDischarge ?? entry.port} />
+              {entry.portOfDischarge && (
+                <FieldRow label="US Port of Entry" value={entry.port} />
+              )}
               <FieldRow label="Incoterm" value={entry.incoterm} />
               <FieldRow label="Quantity" value={entry.quantity.toLocaleString()} />
               <FieldRow label="Shipment Value" value={`$${entry.valueUsd.toLocaleString()}`} />
