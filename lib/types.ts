@@ -2,10 +2,21 @@ export type EntryStatus = 'Draft' | 'Review' | 'Filing' | 'Cleared'
 export type RiskLevel = 'Low' | 'Medium' | 'High'
 export type AgentPhase = 'idle' | 'running' | 'complete' | 'error'
 
+/** URLs of user-uploaded source documents linked to an entry. */
+export interface UploadedDocs {
+  packingListUrl?: string
+  packingListKey?: string
+  commercialInvoiceUrl?: string
+  commercialInvoiceKey?: string
+}
+
 export interface Entry {
   id: string
   entryNo: string
+  /** US CBP port of entry code (LAX/JFK/SEA) — used for duty/filing logic. */
   port: 'LAX' | 'JFK' | 'SEA'
+  /** Destination / discharge port from shipping documents (e.g. "Kaohsiung, Taiwan"). */
+  portOfDischarge?: string
   productName: string
   description: string
   originCountry: string
@@ -21,6 +32,7 @@ export interface Entry {
   status: EntryStatus
   requiredDocs: string[]
   explanation: string
+  uploadedDocs?: UploadedDocs
   createdAt: string
   updatedAt: string
 }
@@ -47,12 +59,27 @@ export interface ExtractedDoc {
   docType: DocType
   importer: string | null
   supplier: string | null
+  /** Explicit COO field if printed — may be absent or wrong; reconcile layer re-validates. */
   coo: string | null
   totalValue: number | null
   currency: string | null
   skuCount: number | null
   grossWeightKg: number | null
+  netWeightKg: number | null
+  /** Raw quantity number as printed (e.g. 2880 or 72). */
   quantity: number | null
+  /** Business unit: BAG, MT, KG, PCS, CTN, PKG, etc. Never assume unit from context. */
+  quantityUnit: string | null
+  /** Per-unit net weight in kg from packing spec (e.g. 25 from "25 KG / PP Bag"). */
+  packUnitKg: number | null
+  /** Per-unit label from packing spec (e.g. "PP Bag", "CTN"). */
+  packUnitLabel: string | null
+  /** Verbatim packing line (e.g. "1.00 * 25.00 KG / PP Bag"). */
+  packingSpecRaw: string | null
+  productDescription: string | null
+  portOfLoading: string | null
+  portOfDischarge: string | null
+  incoterm: string | null
 }
 
 export type IssueSeverity = 'error' | 'warning'

@@ -7,9 +7,14 @@ import {
   ReconcileResult,
   FieldStatus,
 } from '@/lib/types'
+import {
+  enrichExtracted,
+  resolveCoo,
+  reconcileQuantities,
+  formatQuantityDisplay,
+  fmtNum,
+} from '@/lib/trade-reconcile'
 
-// Relative tolerance for numeric comparisons (weights/values rarely match to
-// the cent across two documents). Counts are compared exactly.
 const NUMERIC_TOLERANCE = 0.01
 
 interface ReconcileRequest {
@@ -26,39 +31,46 @@ function textsDiffer(a: string | null, b: string | null): boolean {
   return a.trim().toLowerCase() !== b.trim().toLowerCase()
 }
 
-function numbersDiffer(a: number | null, b: number | null, exact: boolean): boolean {
+function numbersDiffer(a: number | null, b: number | null): boolean {
   if (a === null || b === null) return false
-  if (exact) return a !== b
   const denom = Math.max(Math.abs(a), Math.abs(b), 1)
   return Math.abs(a - b) / denom > NUMERIC_TOLERANCE
 }
 
-function fmtNum(n: number | null): string {
-  if (n === null) return '—'
-  return Number.isInteger(n) ? n.toLocaleString() : n.toLocaleString(undefined, { maximumFractionDigits: 2 })
-}
-
-function deterministicReconcile(pl: ExtractedDoc, inv: ExtractedDoc): ReconcileResult {
+function deterministicReconcile(rawPl: ExtractedDoc, rawInv: ExtractedDoc): ReconcileResult {
+  const { pl, inv } = enrichExtracted(rawPl, rawInv)
   const issues: ReconcileIssue[] = []
 
   const importer = pick(inv.importer, pl.importer)
   const supplier = pick(inv.supplier, pl.supplier)
-  const coo = pick(pl.coo, inv.coo)
   const totalValue = pick(inv.totalValue, pl.totalValue)
   const currency = pick(inv.currency, pl.currency)
   const skuCount = pick(pl.skuCount, inv.skuCount)
   const grossWeightKg = pick(pl.grossWeightKg, inv.grossWeightKg)
-  const quantity = pick(pl.quantity, inv.quantity)
 
-  // ── Missing critical info ──────────────────────────────────────────────────
-  if (!coo) {
+  // ── COO: semantic resolution, not supplier country ─────────────────────────
+  const cooResult = resolveCoo(pl, inv)
+  const coo = cooResult.coo
+  issues.push(...cooResult.issues)
+
+  // ── Quantity: unit-normalized reconciliation ─────────────────────────────
+  const qtyResult = reconcileQuantities(pl, inv)
+  const quantityStatus: FieldStatus = qtyResult.match ? 'ok' : (qtyResult.plNorm.kg === null ? 'missing' : 'mismatch')
+
+  if (!qtyResult.match && qtyResult.plNorm.kg !== null && qtyResult.invNorm.kg !== null) {
     issues.push({
-      code: 'coo_missing',
-      field: 'coo',
+      code: 'quantity_mismatch',
+      field: 'quantity',
       severity: 'error',
-      message: 'Country of origin (COO) is missing from both documents. Required for entry classification and Section 301 screening.',
+      message: qtyResult.message,
+      packingListValue: qtyResult.plNorm.display,
+      invoiceValue: qtyResult.invNorm.display,
     })
   }
+  // When units differ but normalize to the same weight, field table shows "Matched"
+  // with the conversion trail — no false-positive quantity_mismatch issue.
+
+  // ── Missing critical info ──────────────────────────────────────────────────
   if (!importer) {
     issues.push({ code: 'importer_missing', field: 'importer', severity: 'error', message: 'Importer of record could not be identified on either document.' })
   }
@@ -69,17 +81,20 @@ function deterministicReconcile(pl: ExtractedDoc, inv: ExtractedDoc): ReconcileR
     issues.push({ code: 'value_missing', field: 'totalValue', severity: 'error', message: 'No total customs value found on the Commercial Invoice.' })
   }
   if (totalValue !== null && !currency) {
-    issues.push({ code: 'currency_missing', field: 'currency', severity: 'warning', message: 'Total value is present but no currency is stated. Assuming USD is unsafe for duty calculation.' })
+    issues.push({ code: 'currency_missing', field: 'currency', severity: 'warning', message: 'Total value is present but no currency is stated.' })
   }
 
-  // ── Inconsistencies between the two documents ──────────────────────────────
-  if (textsDiffer(pl.coo, inv.coo)) {
-    issues.push({
-      code: 'coo_mismatch', field: 'coo', severity: 'error',
-      message: 'Country of origin differs between the Packing List and Commercial Invoice.',
-      packingListValue: pl.coo ?? '—', invoiceValue: inv.coo ?? '—',
-    })
-  }
+  // Certificate of Origin — deterministic, country-agnostic
+  issues.push({
+    code: 'coo_certificate_missing',
+    field: 'documents',
+    severity: 'warning',
+    message: coo
+      ? `No Certificate of Origin attached. Verify origin documentation for ${coo} goods before filing.`
+      : 'No Certificate of Origin attached. Origin could not be confirmed from available documents.',
+  })
+
+  // ── Cross-document field mismatches ──────────────────────────────────────
   if (textsDiffer(pl.importer, inv.importer)) {
     issues.push({
       code: 'importer_mismatch', field: 'importer', severity: 'warning',
@@ -94,7 +109,7 @@ function deterministicReconcile(pl: ExtractedDoc, inv: ExtractedDoc): ReconcileR
       packingListValue: pl.supplier ?? '—', invoiceValue: inv.supplier ?? '—',
     })
   }
-  if (numbersDiffer(pl.totalValue, inv.totalValue, false)) {
+  if (numbersDiffer(pl.totalValue, inv.totalValue)) {
     issues.push({
       code: 'value_mismatch', field: 'totalValue', severity: 'error',
       message: 'Declared total value is inconsistent between the two documents.',
@@ -108,21 +123,17 @@ function deterministicReconcile(pl: ExtractedDoc, inv: ExtractedDoc): ReconcileR
       packingListValue: pl.currency ?? '—', invoiceValue: inv.currency ?? '—',
     })
   }
-  if (numbersDiffer(pl.grossWeightKg, inv.grossWeightKg, false)) {
-    issues.push({
-      code: 'weight_mismatch', field: 'grossWeightKg', severity: 'warning',
-      message: 'Gross weight does not match between the Packing List and Commercial Invoice.',
-      packingListValue: `${fmtNum(pl.grossWeightKg)} kg`, invoiceValue: `${fmtNum(inv.grossWeightKg)} kg`,
-    })
+  if (numbersDiffer(pl.grossWeightKg, inv.grossWeightKg)) {
+    // Only flag if invoice actually has a gross weight; invoice often omits it
+    if (inv.grossWeightKg !== null) {
+      issues.push({
+        code: 'weight_mismatch', field: 'grossWeightKg', severity: 'warning',
+        message: 'Gross weight does not match between documents.',
+        packingListValue: `${fmtNum(pl.grossWeightKg)} kg`, invoiceValue: `${fmtNum(inv.grossWeightKg)} kg`,
+      })
+    }
   }
-  if (numbersDiffer(pl.quantity, inv.quantity, true)) {
-    issues.push({
-      code: 'quantity_mismatch', field: 'quantity', severity: 'error',
-      message: 'Total quantity of units does not match between documents.',
-      packingListValue: fmtNum(pl.quantity), invoiceValue: fmtNum(inv.quantity),
-    })
-  }
-  if (numbersDiffer(pl.skuCount, inv.skuCount, true)) {
+  if (numbersDiffer(pl.skuCount, inv.skuCount)) {
     issues.push({
       code: 'sku_mismatch', field: 'skuCount', severity: 'warning',
       message: 'SKU / line-item count does not match between documents.',
@@ -130,50 +141,63 @@ function deterministicReconcile(pl: ExtractedDoc, inv: ExtractedDoc): ReconcileR
     })
   }
 
-  const mismatchFields = new Set(issues.filter(i => i.code.endsWith('_mismatch')).map(i => i.field))
-  const fieldStatus = (key: string, value: unknown): FieldStatus => {
+  const mismatchFields = new Set(
+    issues.filter(i => i.code.endsWith('_mismatch') || i.code === 'coo_suspect').map(i => i.field),
+  )
+  const fieldStatus = (key: string, value: unknown, override?: FieldStatus): FieldStatus => {
+    if (override) return override
     if (value === null || value === undefined || value === '') return 'missing'
     if (mismatchFields.has(key)) return 'mismatch'
     return 'ok'
   }
 
+  const plQtyDisplay = formatQuantityDisplay(pl)
+  const invQtyDisplay = formatQuantityDisplay(inv)
+  const reconciledQty = qtyResult.match && qtyResult.plNorm.mt != null
+    ? `${qtyResult.plNorm.mt.toFixed(2)} MT (${qtyResult.message.split(': ')[1] ?? 'normalized match'})`
+    : `${plQtyDisplay} / ${invQtyDisplay}`
+
   const fields: ReconcileField[] = [
     { key: 'importer', label: 'Importer', value: importer ?? '—', status: fieldStatus('importer', importer) },
     { key: 'supplier', label: 'Supplier', value: supplier ?? '—', status: fieldStatus('supplier', supplier) },
-    { key: 'coo', label: 'COO', value: coo ?? '—', status: fieldStatus('coo', coo) },
+    { key: 'coo', label: 'COO', value: coo ? `${coo} (${cooResult.source})` : '—', status: fieldStatus('coo', coo) },
+    { key: 'product', label: 'Product', value: pick(inv.productDescription, pl.productDescription) ?? '—', status: 'ok' },
     { key: 'totalValue', label: 'Total Value', value: totalValue !== null ? `${currency ? currency + ' ' : ''}${fmtNum(totalValue)}` : '—', status: fieldStatus('totalValue', totalValue) },
     { key: 'currency', label: 'Currency', value: currency ?? '—', status: fieldStatus('currency', currency) },
-    { key: 'skuCount', label: 'SKU Count', value: fmtNum(skuCount), status: fieldStatus('skuCount', skuCount) },
+    { key: 'quantity', label: 'Quantity (reconciled)', value: reconciledQty, status: quantityStatus },
     { key: 'grossWeightKg', label: 'Gross Weight', value: grossWeightKg !== null ? `${fmtNum(grossWeightKg)} kg` : '—', status: fieldStatus('grossWeightKg', grossWeightKg) },
-    { key: 'quantity', label: 'Quantity', value: fmtNum(quantity), status: fieldStatus('quantity', quantity) },
+    { key: 'skuCount', label: 'SKU Count', value: fmtNum(skuCount), status: fieldStatus('skuCount', skuCount) },
   ]
 
   return { fields, issues }
 }
 
-const REG_SYSTEM_PROMPT = `You are a US customs compliance reviewer. Given the structured fields extracted from a shipment's Packing List and Commercial Invoice, identify regulatory / partner-government-agency documents that are likely REQUIRED for this shipment but show NO evidence of being present. Respond with valid JSON only.
+const REG_SYSTEM_PROMPT = `You are a cautious US customs compliance screener. Given structured fields from a Packing List and Commercial Invoice, flag ONLY regulatory documents that MIGHT be required — use tentative language, never assert requirements as fact.
 
 JSON shape:
-{ "missingDocs": [ { "doc": string, "reason": string } ] }
+{ "possibleDocs": [ { "doc": string, "reason": string } ] }
 
-Guidance:
-- Consider documents such as FDA Prior Notice, FCC/NCC declarations, MSDS/SDS (hazardous goods, batteries, chemicals), DOT/IATA dangerous goods declaration, FDA/USDA certificates, CE/UL where relevant.
-- Base your reasoning on the supplier/importer names, country of origin, and value where they hint at the product type. Only flag documents with a plausible regulatory basis.
-- Return at most 4 items. If nothing is clearly required, return { "missingDocs": [] }.
-- "reason" must be one short sentence.`
+Rules:
+- Use the actual productDescription field — do NOT relabel products (e.g. do not call mung beans "cereal").
+- For food/agricultural items, say "Possible FDA-regulated food product — recommend verifying Prior Notice requirements" NOT "FDA Prior Notice is required".
+- For origin documentation, reference the resolved COO if provided, not the supplier country.
+- Never claim a specific HTS, exemption status, or that a filing is definitively required.
+- Return at most 3 items. If uncertain, return { "possibleDocs": [] }.
+- "reason" must be one cautious sentence starting with "Possible" or "Recommend verifying".`
 
-async function regulatoryDocs(pl: ExtractedDoc, inv: ExtractedDoc): Promise<ReconcileIssue[]> {
+async function regulatoryDocs(pl: ExtractedDoc, inv: ExtractedDoc, coo: string | null): Promise<ReconcileIssue[]> {
   try {
-    const result = await chatJSON<{ missingDocs?: { doc: string; reason: string }[] }>({
+    const result = await chatJSON<{ possibleDocs?: { doc: string; reason: string }[] }>({
       system: REG_SYSTEM_PROMPT,
-      user: `Packing List fields:\n${JSON.stringify(pl, null, 2)}\n\nCommercial Invoice fields:\n${JSON.stringify(inv, null, 2)}`,
+      user: `Resolved COO: ${coo ?? 'unknown'}\n\nPacking List:\n${JSON.stringify(pl, null, 2)}\n\nCommercial Invoice:\n${JSON.stringify(inv, null, 2)}`,
       maxTokens: 500,
+      temperature: 0,
     })
-    return (result.missingDocs ?? []).slice(0, 4).map(d => ({
-      code: 'regulatory_missing',
+    return (result.possibleDocs ?? []).slice(0, 3).map(d => ({
+      code: 'regulatory_possible',
       field: 'documents',
       severity: 'warning' as const,
-      message: `Missing ${d.doc}: ${d.reason}`,
+      message: `${d.doc}: ${d.reason}`,
     }))
   } catch (err) {
     console.warn('[documents/reconcile] regulatory check skipped:', err)
@@ -190,12 +214,14 @@ export async function POST(req: NextRequest) {
 
     const logs: string[] = []
     logs.push('→ Cross-checking Packing List against Commercial Invoice...')
+    logs.push('→ Normalizing quantity units (BAG/MT/KG) before comparison...')
 
     const result = deterministicReconcile(packingList, invoice)
+    const coo = result.fields.find(f => f.key === 'coo')?.value.split(' (')[0] ?? null
     logs.push(`→ ${result.issues.length} consistency check(s) flagged`)
 
-    logs.push('→ Screening for required regulatory documents...')
-    const regIssues = await regulatoryDocs(packingList, invoice)
+    logs.push('→ Screening for possible regulatory documents...')
+    const regIssues = await regulatoryDocs(packingList, invoice, coo)
     result.issues.push(...regIssues)
 
     const errors = result.issues.filter(i => i.severity === 'error').length
