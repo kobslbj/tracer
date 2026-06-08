@@ -1,5 +1,5 @@
 import { insforge } from './insforge'
-import { Entry } from './types'
+import { Entry, ExtractedDoc, ReconcileResult, DocFileMeta } from './types'
 
 // Map DB row (snake_case) → Entry (camelCase)
 function rowToEntry(row: Record<string, unknown>): Entry {
@@ -68,4 +68,39 @@ export async function updateEntryStatus(id: string, status: Entry['status']): Pr
     .from('entries')
     .update({ status, updated_at: new Date().toISOString() })
     .eq('id', id)
+}
+
+function pick<T>(a: T | null, b: T | null): T | null {
+  return a !== null && a !== undefined ? a : b
+}
+
+/**
+ * Persist a reconciled document set (the merged fields, the cross-check issues,
+ * and the InsForge Storage references for both uploaded files) to the
+ * `document_sets` table. Returns the new row id.
+ */
+export async function insertDocumentSet(
+  packingList: ExtractedDoc,
+  invoice: ExtractedDoc,
+  result: ReconcileResult,
+  files: DocFileMeta,
+): Promise<string | null> {
+  const { data, error } = await insforge.database.from('document_sets').insert([{
+    importer: pick(invoice.importer, packingList.importer),
+    supplier: pick(invoice.supplier, packingList.supplier),
+    coo: pick(packingList.coo, invoice.coo),
+    total_value: pick(invoice.totalValue, packingList.totalValue),
+    currency: pick(invoice.currency, packingList.currency),
+    sku_count: pick(packingList.skuCount, invoice.skuCount),
+    gross_weight_kg: pick(packingList.grossWeightKg, invoice.grossWeightKg),
+    quantity: pick(packingList.quantity, invoice.quantity),
+    issues: result.issues,
+    packing_list_key: files.packingListKey ?? null,
+    packing_list_url: files.packingListUrl ?? null,
+    invoice_key: files.invoiceKey ?? null,
+    invoice_url: files.invoiceUrl ?? null,
+  }]).select()
+
+  if (error) throw error
+  return (data?.[0] as { id?: string })?.id ?? null
 }
