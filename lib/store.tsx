@@ -15,12 +15,10 @@ type Action =
   | { type: 'SET_AGENT_STATUS'; agent: keyof AgentStatus; phase: AgentPhase }
   | { type: 'SET_DRAFT'; draft: Entry | null }
   | { type: 'APPROVE_ENTRY'; entry: Entry }
-  | { type: 'TICK_STATUS'; id: string }
+  | { type: 'UPDATE_ENTRY'; entry: Entry }
   | { type: 'RESET_AGENTS' }
   | { type: 'SET_PROCESSING'; value: boolean }
   | { type: 'SET_ENTRIES'; entries: Entry[] }
-
-const statusOrder = ['Draft', 'Review', 'Filing', 'Cleared'] as const
 
 function reducer(state: AppState, action: Action): AppState {
   switch (action.type) {
@@ -32,8 +30,7 @@ function reducer(state: AppState, action: Action): AppState {
     case 'SET_DRAFT':
       return { ...state, currentDraft: action.draft }
     case 'APPROVE_ENTRY': {
-      const entry = { ...action.entry, status: 'Review' as const, updatedAt: new Date().toISOString() }
-      // Avoid duplicates if realtime already pushed it
+      const entry = { ...action.entry, updatedAt: new Date().toISOString() }
       const exists = state.entries.some(e => e.id === entry.id)
       return {
         ...state,
@@ -43,15 +40,12 @@ function reducer(state: AppState, action: Action): AppState {
     }
     case 'SET_ENTRIES':
       return { ...state, entries: action.entries }
-    case 'TICK_STATUS': {
+    case 'UPDATE_ENTRY': {
       return {
         ...state,
-        entries: state.entries.map(e => {
-          if (e.id !== action.id) return e
-          const idx = statusOrder.indexOf(e.status)
-          if (idx === -1 || idx >= statusOrder.length - 1) return e
-          return { ...e, status: statusOrder[idx + 1], updatedAt: new Date().toISOString() }
-        }),
+        entries: state.entries.map(e =>
+          e.id === action.entry.id ? action.entry : e,
+        ),
       }
     }
     case 'RESET_AGENTS':

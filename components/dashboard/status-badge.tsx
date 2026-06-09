@@ -1,25 +1,36 @@
 import { Badge } from '@/components/ui/badge'
-import { EntryStatus, RiskLevel } from '@/lib/types'
+import { PrimaryQueue, RiskLevel } from '@/lib/types'
+import { PRIMARY_QUEUE_LABELS } from '@/lib/entry-triage'
 import { cn } from '@/lib/utils'
 
-interface StatusBadgeProps {
-  status: EntryStatus
+interface PrimaryStatusBadgeProps {
+  status: PrimaryQueue
 }
 
-const statusStyles: Record<EntryStatus, string> = {
-  Draft: 'bg-zinc-800 text-zinc-300 border-zinc-700',
-  Review: 'bg-amber-950 text-amber-300 border-amber-800',
-  Filing: 'bg-blue-950 text-blue-300 border-blue-800',
-  Cleared: 'bg-emerald-950 text-emerald-300 border-emerald-800',
+const primaryStyles: Record<PrimaryQueue, string> = {
+  needs_attention: 'bg-amber-950 text-amber-300 border-amber-800',
+  waiting_on_docs: 'bg-blue-950 text-blue-300 border-blue-800',
+  ready_for_review: 'bg-zinc-800 text-zinc-300 border-zinc-700',
 }
 
-export function StatusBadge({ status }: StatusBadgeProps) {
+export function PrimaryStatusBadge({ status }: PrimaryStatusBadgeProps) {
   return (
     <Badge
       variant="outline"
-      className={cn('font-medium text-xs', statusStyles[status])}
+      className={cn('text-xs font-medium', primaryStyles[status])}
     >
-      {status}
+      {PRIMARY_QUEUE_LABELS[status]}
+    </Badge>
+  )
+}
+
+export function ResolutionBadge() {
+  return (
+    <Badge
+      variant="outline"
+      className="border-emerald-800 bg-emerald-950 text-xs font-medium text-emerald-300"
+    >
+      Ready to Submit
     </Badge>
   )
 }
@@ -38,7 +49,7 @@ export function RiskBadge({ risk }: RiskBadgeProps) {
   return (
     <Badge
       variant="outline"
-      className={cn('font-medium text-xs', riskStyles[risk])}
+      className={cn('text-xs font-medium', riskStyles[risk])}
     >
       {risk}
     </Badge>

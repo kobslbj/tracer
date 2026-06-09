@@ -1,5 +1,7 @@
 import { insforge } from './insforge'
-import { Entry, ExtractedDoc, ReconcileResult, DocFileMeta, UploadedDocs } from './types'
+import { Entry, ExtractedDoc, ReconcileResult, DocFileMeta, UploadedDocs, EntryReviewSnapshot, ReviewSnapshotRecord, ShipmentTimelineEvent } from './types'
+import { stripDeltaFromSnapshot } from './review-delta'
+import { eventsForReviewSave, prependTimelineEvents } from './shipment-timeline'
 
 // Map DB row (snake_case) → Entry (camelCase)
 function rowToEntry(row: Record<string, unknown>): Entry {
@@ -23,6 +25,9 @@ function rowToEntry(row: Record<string, unknown>): Entry {
     status: row.status as Entry['status'],
     requiredDocs: row.required_docs as string[],
     explanation: row.explanation as string,
+    reviewSnapshot: (row.review_snapshot as EntryReviewSnapshot) ?? undefined,
+    reviewHistory: (row.review_history as ReviewSnapshotRecord[]) ?? undefined,
+    timeline: (row.timeline as ShipmentTimelineEvent[]) ?? undefined,
     uploadedDocs: (row.uploaded_docs as UploadedDocs) ?? undefined,
     createdAt: row.created_at as string,
     updatedAt: row.updated_at as string,
@@ -60,6 +65,9 @@ export async function insertEntry(entry: Entry): Promise<void> {
     status: entry.status,
     required_docs: entry.requiredDocs,
     explanation: entry.explanation,
+    review_snapshot: entry.reviewSnapshot ?? null,
+    review_history: entry.reviewHistory ?? [],
+    timeline: entry.timeline ?? [],
     uploaded_docs: entry.uploadedDocs ?? {},
     created_at: entry.createdAt,
     updated_at: entry.updatedAt,
@@ -72,6 +80,74 @@ export async function updateEntryStatus(id: string, status: Entry['status']): Pr
     .from('entries')
     .update({ status, updated_at: new Date().toISOString() })
     .eq('id', id)
+}
+
+export async function updateEntry(
+  id: string,
+  patch: Partial<Pick<Entry, 'status' | 'reviewSnapshot' | 'reviewHistory' | 'uploadedDocs' | 'timeline'>>,
+): Promise<void> {
+  const row: Record<string, unknown> = { updated_at: new Date().toISOString() }
+  if (patch.status !== undefined) row.status = patch.status
+  if (patch.reviewSnapshot !== undefined) row.review_snapshot = patch.reviewSnapshot
+  if (patch.reviewHistory !== undefined) row.review_history = patch.reviewHistory
+  if (patch.uploadedDocs !== undefined) row.uploaded_docs = patch.uploadedDocs
+  if (patch.timeline !== undefined) row.timeline = patch.timeline
+  await insforge.database.from('entries').update(row).eq('id', id)
+}
+
+export async function appendTimelineEvents(
+  entryId: string,
+  existing: ShipmentTimelineEvent[] | undefined,
+  newEvents: ShipmentTimelineEvent[],
+): Promise<ShipmentTimelineEvent[]> {
+  const timeline = prependTimelineEvents(existing, newEvents)
+  await updateEntry(entryId, { timeline })
+  return timeline
+}
+
+/** Replace entry review state — archives prior snapshot into history. */
+export async function saveEntryReviewUpdate(
+  previous: Entry,
+  updated: Entry,
+): Promise<void> {
+  const history: ReviewSnapshotRecord[] = [...(previous.reviewHistory ?? [])]
+  if (previous.reviewSnapshot) {
+    history.unshift({
+      snapshot: stripDeltaFromSnapshot(previous.reviewSnapshot),
+      recordedAt: previous.reviewSnapshot.recordedAt ?? previous.updatedAt,
+    })
+  }
+
+  const timeline = prependTimelineEvents(
+    previous.timeline,
+    eventsForReviewSave(previous, updated),
+  )
+
+  const { error } = await insforge.database.from('entries').update({
+    status: updated.status,
+    review_snapshot: updated.reviewSnapshot ?? null,
+    review_history: history.slice(0, 10),
+    timeline,
+    uploaded_docs: updated.uploadedDocs ?? {},
+    updated_at: updated.updatedAt,
+    // Refresh key fields that may change on re-review
+    product_name: updated.productName,
+    description: updated.description,
+    origin_country: updated.originCountry,
+    quantity: updated.quantity,
+    value_usd: updated.valueUsd,
+    hts_code: updated.htsCode,
+    duty_rate: updated.dutyRate,
+    estimated_duty_usd: updated.estimatedDutyUsd,
+    risk_level: updated.riskLevel,
+    review_required: updated.reviewRequired,
+    review_reason: updated.reviewReason,
+    required_docs: updated.requiredDocs,
+    explanation: updated.explanation,
+    port_of_discharge: updated.portOfDischarge ?? null,
+  }).eq('id', previous.id)
+
+  if (error) throw error
 }
 
 function pick<T>(a: T | null, b: T | null): T | null {

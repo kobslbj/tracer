@@ -1,48 +1,54 @@
 'use client'
 
-import { useState, useCallback } from 'react'
-import { useRouter } from 'next/navigation'
+import { useState, useCallback, useRef, Suspense, useMemo } from 'react'
+import { useRouter, useSearchParams } from 'next/navigation'
 import { motion, AnimatePresence } from 'framer-motion'
 import { useStore } from '@/lib/store'
-import { insertEntry } from '@/lib/insforge-db'
+import { insertEntry, saveEntryReviewUpdate } from '@/lib/insforge-db'
+import { buildReviewSnapshot, derivePrimaryStatus } from '@/lib/entry-triage'
+import { computeIssueListDelta } from '@/lib/review-delta'
+import { eventsForReviewSave, prependTimelineEvents } from '@/lib/shipment-timeline'
 import { docFileMetaToUploaded } from '@/lib/doc-links'
 import { entryOverridesFromDocs } from '@/lib/entry-from-docs'
 import {
   Entry, AgentStatus, AgentPhase, RiskLevel,
-  DocType, ExtractedDoc, ReconcileResult, DocFileMeta,
+  DocType, ExtractedDoc, ReconcileResult, DocFileMeta, OptionalDocType, ReviewDelta,
+  ReconcileIssue,
 } from '@/lib/types'
 import { ShipmentInput } from '@/components/intake/shipment-input'
-import { DocumentUpload } from '@/components/intake/document-upload'
+import { DocumentUpload, DocumentUploadPayload } from '@/components/intake/document-upload'
 import { FieldTable } from '@/components/intake/field-table'
 import { ReconcilePanel } from '@/components/intake/reconcile-panel'
+import { ShipmentReviewSummary } from '@/components/intake/shipment-review-summary'
+import { ReviewTrace } from '@/components/intake/review-trace'
 import { AgentPipeline, PipelineAgent } from '@/components/intake/agent-pipeline'
 import { EntryResult } from '@/components/entry/entry-result'
-import { Tag, Calculator, ShieldCheck, FileText, Loader2, ArrowRight, MessageSquareText, ScanLine } from 'lucide-react'
+import { Tag, Calculator, ShieldCheck, FileText, Loader2, ChevronDown } from 'lucide-react'
+import { cn } from '@/lib/utils'
 
 const agentConfig: Record<keyof AgentStatus, { name: string; description: string; icon: React.ReactNode }> = {
   hts: {
-    name: 'Classification Agent',
-    description: 'HTS Schedule B · GRI rules · vector knowledge base',
+    name: 'Classification review',
+    description: 'Potential HTS issues',
     icon: <Tag className="w-4 h-4" />,
   },
   duty: {
-    name: 'Duty Agent',
-    description: 'Section 301 tariff lookups · ad valorem calculation',
+    name: 'Tariff review',
+    description: 'Estimated duties',
     icon: <Calculator className="w-4 h-4" />,
   },
   compliance: {
-    name: 'Compliance Agent',
-    description: 'CBP CATAIR · ECCN · hazmat screening',
+    name: 'Import compliance review',
+    description: 'Regulatory flags',
     icon: <ShieldCheck className="w-4 h-4" />,
   },
   entry: {
-    name: 'Draft Agent',
-    description: 'Writes to InsForge Postgres · triggers realtime broadcast',
+    name: 'Entry draft',
+    description: 'Pre-filing summary',
     icon: <FileText className="w-4 h-4" />,
   },
 }
 
-type Mode = 'describe' | 'upload'
 type DocPhase = 'idle' | 'processing' | 'done' | 'error'
 
 function readAsDataUrl(file: File): Promise<string> {
@@ -86,27 +92,45 @@ function buildShipmentDescription(pl: ExtractedDoc, inv: ExtractedDoc): string {
 }
 
 export default function IntakePage() {
-  const router = useRouter()
-  const { state, dispatch } = useStore()
-  const [mode, setMode] = useState<Mode>('describe')
+  return (
+    <Suspense fallback={<div className="mx-auto max-w-3xl px-6 py-12 text-sm text-muted-foreground">Loading…</div>}>
+      <IntakePageContent />
+    </Suspense>
+  )
+}
 
-  // ── Document OCR + reconcile state ─────────────────────────────────────────
+function IntakePageContent() {
+  const router = useRouter()
+  const searchParams = useSearchParams()
+  const { state, dispatch } = useStore()
+  const [showManualInput, setShowManualInput] = useState(false)
+
   const [docPhase, setDocPhase] = useState<DocPhase>('idle')
   const [docLogs, setDocLogs] = useState<string[]>([])
   const [docError, setDocError] = useState<string | null>(null)
   const [extracted, setExtracted] = useState<{ packingList: ExtractedDoc; invoice: ExtractedDoc } | null>(null)
   const [reconcile, setReconcile] = useState<ReconcileResult | null>(null)
+  const [reviewDelta, setReviewDelta] = useState<ReviewDelta | null>(null)
+  const priorIssuesRef = useRef<ReconcileIssue[] | null>(null)
   const [uploadedFiles, setUploadedFiles] = useState<DocFileMeta | null>(null)
+
+  const resumingEntry = useMemo(() => {
+    const entryId = searchParams.get('entryId')
+    if (!entryId) return null
+    return state.entries.find(e => e.id === entryId) ?? null
+  }, [searchParams, state.entries])
 
   const pushDocLog = useCallback((line: string) => {
     setDocLogs(prev => [...prev, line])
   }, [])
 
-  // ── Agent pipeline state ───────────────────────────────────────────────────
   const [logLines, setLogLines] = useState<Record<keyof AgentStatus, string[]>>({
     hts: [], duty: [], compliance: [], entry: [],
   })
   const [showAgents, setShowAgents] = useState(false)
+  const [draftExpanded, setDraftExpanded] = useState(false)
+  const [draftStarted, setDraftStarted] = useState(false)
+  const [advancedExpanded, setAdvancedExpanded] = useState(false)
 
   const appendLog = useCallback((agent: keyof AgentStatus, lines: string[]) => {
     setLogLines(prev => ({ ...prev, [agent]: [...prev[agent], ...lines] }))
@@ -138,6 +162,7 @@ export default function IntakePage() {
     dispatch({ type: 'SET_PROCESSING', value: true })
     setLogLines({ hts: [], duty: [], compliance: [], entry: [] })
     setShowAgents(true)
+    setDraftStarted(true)
 
     const localPhase: Record<keyof AgentStatus, AgentPhase> = {
       hts: 'idle', duty: 'idle', compliance: 'idle', entry: 'idle',
@@ -200,7 +225,6 @@ export default function IntakePage() {
     }
   }
 
-  // ── Document flow orchestration ────────────────────────────────────────────
   async function uploadDoc(file: File): Promise<{ url?: string; key?: string }> {
     const dataUrl = await readAsDataUrl(file)
     const res = await fetch('/api/documents/upload', {
@@ -237,18 +261,44 @@ export default function IntakePage() {
     return data.extracted as ExtractedDoc
   }
 
-  async function runDocumentFlow(files: Record<DocType, File>) {
+  async function runDocumentFlow(payload: DocumentUploadPayload) {
     setDocPhase('processing')
     setDocError(null)
     setDocLogs([])
     setExtracted(null)
     setReconcile(null)
     setUploadedFiles(null)
+    setShowAgents(false)
+    setDraftExpanded(false)
+    setDraftStarted(false)
+    setAdvancedExpanded(false)
 
     try {
-      pushDocLog('→ Uploading documents to InsForge Storage...')
-      const [plFile, invFile] = [files.packing_list, files.commercial_invoice]
+      pushDocLog('→ Uploading documents...')
+      const [plFile, invFile] = [payload.required.packing_list, payload.required.commercial_invoice]
       const [plMeta, invMeta] = await Promise.all([uploadDoc(plFile), uploadDoc(invFile)])
+
+      const fileMeta: DocFileMeta = {
+        packingListKey: plMeta.key,
+        packingListUrl: plMeta.url,
+        invoiceKey: invMeta.key,
+        invoiceUrl: invMeta.url,
+      }
+
+      const optionalKeys: OptionalDocType[] = ['spec_sheet', 'product_image']
+      for (const key of optionalKeys) {
+        const file = payload.optional[key]
+        if (!file) continue
+        pushDocLog(`→ Storing optional ${key.replace('_', ' ')}...`)
+        const meta = await uploadDoc(file)
+        if (key === 'spec_sheet') {
+          fileMeta.specSheetKey = meta.key
+          fileMeta.specSheetUrl = meta.url
+        } else {
+          fileMeta.productImageKey = meta.key
+          fileMeta.productImageUrl = meta.url
+        }
+      }
 
       const [packingList, invoice] = await Promise.all([
         extractDoc('packing_list', plFile),
@@ -256,7 +306,13 @@ export default function IntakePage() {
       ])
       setExtracted({ packingList, invoice })
 
-      pushDocLog('→ Reconciling Packing List against Commercial Invoice...')
+      pushDocLog('→ Cross-checking documents...')
+      const priorIssues =
+        reconcile?.issues ??
+        priorIssuesRef.current ??
+        resumingEntry?.reviewSnapshot?.issues ??
+        null
+
       const recRes = await fetch('/api/documents/reconcile', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
@@ -271,10 +327,13 @@ export default function IntakePage() {
       const result = recData.result as ReconcileResult
       setReconcile(result)
 
-      const fileMeta: DocFileMeta = {
-        packingListKey: plMeta.key, packingListUrl: plMeta.url,
-        invoiceKey: invMeta.key, invoiceUrl: invMeta.url,
+      if (priorIssues?.length) {
+        setReviewDelta(computeIssueListDelta(priorIssues, result.issues))
+      } else {
+        setReviewDelta(null)
       }
+      priorIssuesRef.current = result.issues
+
       const persistRes = await fetch('/api/documents/persist', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
@@ -296,36 +355,75 @@ export default function IntakePage() {
     }
   }
 
-  function runPipelineFromDocs() {
-    if (!extracted) return
-    const description = buildShipmentDescription(extracted.packingList, extracted.invoice)
-    runAgents(description, uploadedFiles ?? undefined, {
-      packingList: extracted.packingList,
-      invoice: extracted.invoice,
-      reconcile: reconcile!,
-    })
+  function handleExpandDraft() {
+    const next = !draftExpanded
+    setDraftExpanded(next)
+    if (next && !draftStarted && extracted && reconcile) {
+      const description = buildShipmentDescription(extracted.packingList, extracted.invoice)
+      runAgents(description, uploadedFiles ?? undefined, {
+        packingList: extracted.packingList,
+        invoice: extracted.invoice,
+        reconcile,
+      })
+    }
   }
 
-  // ── Approve & file ─────────────────────────────────────────────────────────
-  const [approveError, setApproveError] = useState<string | null>(null)
+  const [saveError, setSaveError] = useState<string | null>(null)
 
-  async function handleApprove() {
+  async function handleSaveForReview() {
     if (!state.currentDraft) return
-    const entry = { ...state.currentDraft, status: 'Review' as const, updatedAt: new Date().toISOString() }
-    setApproveError(null)
+    const draft = state.currentDraft
+    const issues = reconcile?.issues ?? []
+    const previousSnapshot = resumingEntry?.reviewSnapshot ?? null
+    const reviewSnapshot = buildReviewSnapshot(issues, draft, { previousSnapshot })
+    if (!reviewSnapshot.delta && reviewDelta) {
+      reviewSnapshot.delta = reviewDelta
+    }
+    const primaryStatus = derivePrimaryStatus(reviewSnapshot, draft) ?? 'ready_for_review'
+    const now = new Date().toISOString()
+
+    setSaveError(null)
     try {
-      await insertEntry(entry)
+      if (resumingEntry) {
+        const updated: Entry = {
+          ...draft,
+          id: resumingEntry.id,
+          entryNo: resumingEntry.entryNo,
+          createdAt: resumingEntry.createdAt,
+          status: primaryStatus,
+          reviewSnapshot,
+          uploadedDocs: uploadedFiles ? docFileMetaToUploaded(uploadedFiles) : resumingEntry.uploadedDocs,
+          updatedAt: now,
+        }
+        await saveEntryReviewUpdate(resumingEntry, updated)
+        const timeline = prependTimelineEvents(
+          resumingEntry.timeline,
+          eventsForReviewSave(resumingEntry, updated),
+        )
+        dispatch({ type: 'UPDATE_ENTRY', entry: { ...updated, timeline } })
+      } else {
+        const entry: Entry = {
+          ...draft,
+          status: primaryStatus,
+          reviewSnapshot,
+          uploadedDocs: uploadedFiles ? docFileMetaToUploaded(uploadedFiles) : undefined,
+          updatedAt: now,
+        }
+        entry.timeline = eventsForReviewSave(null, entry)
+        await insertEntry(entry)
+        dispatch({ type: 'APPROVE_ENTRY', entry })
+      }
     } catch (err) {
-      console.error('[handleApprove] failed to persist entry:', err)
-      setApproveError('Failed to file entry to InsForge. Please try again.')
+      console.error('[handleSaveForReview]', err)
+      setSaveError('Failed to save entry. Please try again.')
       return
     }
-    dispatch({ type: 'APPROVE_ENTRY', entry: state.currentDraft })
     router.push('/dashboard')
   }
 
   const agentKeys = ['hts', 'duty', 'compliance', 'entry'] as const
   const allComplete = agentKeys.every(k => state.agentStatus[k] === 'complete')
+  const blockingCount = reconcile?.issues.filter(i => i.severity === 'error').length ?? 0
 
   const pipelineAgents: PipelineAgent[] = agentKeys.map(key => ({
     key,
@@ -341,127 +439,202 @@ export default function IntakePage() {
   return (
     <div className="mx-auto max-w-3xl px-6 py-12">
       <div className="mb-8">
-        <h1 className="text-2xl font-semibold tracking-tight text-foreground">Autonomous customs operations for brokers</h1>
+        <h1 className="text-2xl font-semibold tracking-tight text-foreground">
+          {resumingEntry ? 'Continue shipment review' : 'AI copilot for customs document review'}
+        </h1>
         <p className="mt-1.5 text-sm text-muted-foreground">
-          Describe a shipment, or upload the Packing List and Commercial Invoice to extract and reconcile entry data automatically.
+          {resumingEntry
+            ? `Re-upload documents for ${resumingEntry.productName} — changes since last review will be tracked.`
+            : 'Upload shipment documents to detect missing paperwork, compliance risks, and filing issues before submission.'}
         </p>
       </div>
 
-      {/* Mode toggle */}
-      <div className="mb-5 inline-flex rounded-lg border border-border bg-card/60 p-1 backdrop-blur-sm">
-        {([
-          { id: 'describe' as Mode, label: 'Describe shipment', icon: <MessageSquareText className="h-3.5 w-3.5" /> },
-          { id: 'upload' as Mode, label: 'Upload documents', icon: <ScanLine className="h-3.5 w-3.5" /> },
-        ]).map(t => (
-          <button
-            key={t.id}
-            type="button"
-            onClick={() => setMode(t.id)}
-            disabled={state.isProcessing || docBusy}
-            className={cnToggle(mode === t.id)}
+      <DocumentUpload onAnalyze={runDocumentFlow} disabled={docBusy || state.isProcessing} />
+
+      <p className="mt-4 text-center text-xs text-muted-foreground">
+        No documents yet?{' '}
+        <button
+          type="button"
+          onClick={() => setShowManualInput(v => !v)}
+          disabled={docBusy || state.isProcessing}
+          className="text-primary underline-offset-2 hover:underline disabled:opacity-50"
+        >
+          Describe shipment manually
+        </button>
+      </p>
+
+      <AnimatePresence>
+        {showManualInput && (
+          <motion.div
+            initial={{ opacity: 0, height: 0 }}
+            animate={{ opacity: 1, height: 'auto' }}
+            exit={{ opacity: 0, height: 0 }}
+            className="mt-4 overflow-hidden"
           >
-            {t.icon}
-            {t.label}
-          </button>
-        ))}
-      </div>
+            <ShipmentInput
+              onSubmit={input => {
+                setShowManualInput(false)
+                runAgents(input)
+              }}
+              disabled={state.isProcessing || docBusy}
+            />
+          </motion.div>
+        )}
+      </AnimatePresence>
 
-      {mode === 'describe' ? (
-        <ShipmentInput onSubmit={runAgents} disabled={state.isProcessing} />
-      ) : (
-        <div className="space-y-8">
-          <DocumentUpload onAnalyze={runDocumentFlow} disabled={docBusy} />
+      <AnimatePresence>
+        {docLogs.length > 0 && docPhase !== 'done' && (
+          <motion.div
+            initial={{ opacity: 0, y: 10 }}
+            animate={{ opacity: 1, y: 0 }}
+            exit={{ opacity: 0 }}
+            className="mt-6 rounded-xl border border-border bg-card/60 p-4 backdrop-blur-sm"
+          >
+            <div className="mb-2 flex items-center gap-2 text-xs font-semibold uppercase tracking-wider text-muted-foreground">
+              {docBusy && <Loader2 className="h-3.5 w-3.5 animate-spin text-primary" />}
+              Processing
+            </div>
+            <div className="space-y-1 font-mono text-xs text-muted-foreground">
+              {docLogs.map((l, i) => (
+                <div key={i}>{l}</div>
+              ))}
+            </div>
+          </motion.div>
+        )}
+      </AnimatePresence>
 
-          {/* Processing log */}
-          <AnimatePresence>
-            {docLogs.length > 0 && docPhase !== 'done' && (
-              <motion.div
-                initial={{ opacity: 0, y: 10 }}
-                animate={{ opacity: 1, y: 0 }}
-                exit={{ opacity: 0 }}
-                className="rounded-xl border border-border bg-card/60 p-4 backdrop-blur-sm"
-              >
-                <div className="mb-2 flex items-center gap-2 text-xs font-semibold uppercase tracking-wider text-muted-foreground">
-                  {docBusy && <Loader2 className="h-3.5 w-3.5 animate-spin text-primary" />}
-                  Processing
-                </div>
-                <div className="space-y-1 font-mono text-xs text-muted-foreground">
-                  {docLogs.map((l, i) => (
-                    <div key={i}>{l}</div>
-                  ))}
-                </div>
-              </motion.div>
-            )}
-          </AnimatePresence>
-
-          {docError && (
-            <p className="rounded-lg border border-red-800/50 bg-red-950/30 px-3 py-2 text-xs text-red-300">
-              {docError}
-            </p>
-          )}
-
-          {/* Results */}
-          <AnimatePresence>
-            {docPhase === 'done' && reconcile && (
-              <motion.div
-                initial={{ opacity: 0, y: 16 }}
-                animate={{ opacity: 1, y: 0 }}
-                transition={{ duration: 0.3 }}
-                className="space-y-8"
-              >
-                <div>
-                  <SectionHeader title="Extracted Fields" />
-                  <FieldTable fields={reconcile.fields} />
-                </div>
-
-                <div>
-                  <SectionHeader title="Reconciliation" />
-                  <ReconcilePanel issues={reconcile.issues} />
-                </div>
-
-                <div className="flex items-center justify-between gap-4 rounded-xl border border-border bg-card/60 p-4 backdrop-blur-sm">
-                  <p className="text-sm text-muted-foreground">
-                    Continue with the extracted data — run the AI agent pipeline to classify, price duty, screen compliance and draft the entry.
-                  </p>
-                  <button
-                    onClick={runPipelineFromDocs}
-                    disabled={state.isProcessing}
-                    className="inline-flex shrink-0 items-center gap-2 rounded-lg bg-primary px-4 py-2 text-sm font-medium text-primary-foreground shadow-[0_0_18px_-6px_var(--color-primary)] transition-colors hover:bg-primary/90 disabled:opacity-50"
-                  >
-                    Run classification pipeline
-                    <ArrowRight className="h-4 w-4" />
-                  </button>
-                </div>
-              </motion.div>
-            )}
-          </AnimatePresence>
-        </div>
+      {docError && (
+        <p className="mt-4 rounded-lg border border-red-800/50 bg-red-950/30 px-3 py-2 text-xs text-red-300">
+          {docError}
+        </p>
       )}
 
-      {/* Agent pipeline + draft */}
       <AnimatePresence>
-        {showAgents && (
+        {docPhase === 'done' && reconcile && extracted && (
           <motion.div
             initial={{ opacity: 0, y: 16 }}
             animate={{ opacity: 1, y: 0 }}
             transition={{ duration: 0.3 }}
-            className="mt-10 space-y-8"
+            className="mt-10 space-y-4"
           >
-            <div>
-              <SectionHeader title="Agent Pipeline" />
-              <AgentPipeline agents={pipelineAgents} />
+            <ShipmentReviewSummary
+              issues={reconcile.issues}
+              packingList={extracted.packingList}
+              invoice={extracted.invoice}
+              delta={reviewDelta}
+            />
+
+            <ReviewTrace
+              issues={reconcile.issues}
+              packingList={extracted.packingList}
+              invoice={extracted.invoice}
+            />
+
+            <div className="rounded-xl border border-border bg-card/60 backdrop-blur-sm">
+              <button
+                type="button"
+                onClick={() => setAdvancedExpanded(v => !v)}
+                className="flex w-full items-center justify-between gap-3 px-5 py-4 text-left"
+              >
+                <div>
+                  <p className="text-sm font-medium text-foreground">Advanced review</p>
+                  <p className="text-xs text-muted-foreground mt-0.5">
+                    Full issue breakdown, extracted fields, and cross-document comparison
+                  </p>
+                </div>
+                <ChevronDown className={cn('h-4 w-4 shrink-0 text-muted-foreground transition-transform', advancedExpanded && 'rotate-180')} />
+              </button>
+
+              <AnimatePresence>
+                {advancedExpanded && (
+                  <motion.div
+                    initial={{ opacity: 0, height: 0 }}
+                    animate={{ opacity: 1, height: 'auto' }}
+                    exit={{ opacity: 0, height: 0 }}
+                    className="overflow-hidden border-t border-border/60 px-5 pb-5 pt-4 space-y-8"
+                  >
+                    <ReconcilePanel issues={reconcile.issues} />
+                    <div>
+                      <SectionHeader title="Extracted fields" />
+                      <FieldTable fields={reconcile.fields} />
+                    </div>
+                  </motion.div>
+                )}
+              </AnimatePresence>
             </div>
 
-            {allComplete && state.currentDraft && (
-              <div>
-                <SectionHeader title="Classification Result" />
-                <EntryResult entry={state.currentDraft} onApprove={handleApprove} />
-                {approveError && (
-                  <p className="mt-3 rounded-lg border border-red-800/50 bg-red-950/30 px-3 py-2 text-xs text-red-300">
-                    {approveError}
+            <div className="rounded-xl border border-border bg-card/60 backdrop-blur-sm">
+              <button
+                type="button"
+                onClick={handleExpandDraft}
+                disabled={state.isProcessing}
+                className="flex w-full items-center justify-between gap-3 px-5 py-4 text-left"
+              >
+                <div>
+                  <p className="text-sm font-medium text-foreground">Pre-submission review</p>
+                  <p className="text-xs text-muted-foreground mt-0.5">
+                    HTS estimate, duty summary, and filing readiness — optional
                   </p>
+                </div>
+                <ChevronDown className={cn('h-4 w-4 shrink-0 text-muted-foreground transition-transform', draftExpanded && 'rotate-180')} />
+              </button>
+
+              <AnimatePresence>
+                {draftExpanded && (
+                  <motion.div
+                    initial={{ opacity: 0, height: 0 }}
+                    animate={{ opacity: 1, height: 'auto' }}
+                    exit={{ opacity: 0, height: 0 }}
+                    className="overflow-hidden border-t border-border/60 px-5 pb-5 pt-4"
+                  >
+                    {showAgents && (
+                      <div className="space-y-6">
+                        <AgentPipeline agents={pipelineAgents} />
+                        {allComplete && state.currentDraft && (
+                          <EntryResult
+                            entry={state.currentDraft}
+                            onApprove={handleSaveForReview}
+                            saveBlocked={blockingCount > 0}
+                          />
+                        )}
+                        {saveError && (
+                          <p className="rounded-lg border border-red-800/50 bg-red-950/30 px-3 py-2 text-xs text-red-300">
+                            {saveError}
+                          </p>
+                        )}
+                      </div>
+                    )}
+                    {!showAgents && state.isProcessing && (
+                      <div className="flex items-center gap-2 text-sm text-muted-foreground">
+                        <Loader2 className="h-4 w-4 animate-spin" />
+                        Generating pre-filing draft…
+                      </div>
+                    )}
+                  </motion.div>
                 )}
-              </div>
+              </AnimatePresence>
+            </div>
+          </motion.div>
+        )}
+      </AnimatePresence>
+
+      {/* Manual describe path — pipeline shown directly */}
+      <AnimatePresence>
+        {showAgents && !extracted && (
+          <motion.div
+            initial={{ opacity: 0, y: 16 }}
+            animate={{ opacity: 1, y: 0 }}
+            className="mt-10 space-y-8"
+          >
+            <SectionHeader title="Pre-submission review (optional)" />
+            <AgentPipeline agents={pipelineAgents} />
+            {allComplete && state.currentDraft && (
+              <EntryResult entry={state.currentDraft} onApprove={handleSaveForReview} />
+            )}
+            {saveError && (
+              <p className="rounded-lg border border-red-800/50 bg-red-950/30 px-3 py-2 text-xs text-red-300">
+                {saveError}
+              </p>
             )}
           </motion.div>
         )}
@@ -477,11 +650,4 @@ function SectionHeader({ title }: { title: string }) {
       <span className="h-px flex-1 bg-linear-to-r from-border to-transparent" />
     </div>
   )
-}
-
-function cnToggle(active: boolean): string {
-  return [
-    'flex items-center gap-1.5 rounded-md px-3 py-1.5 text-sm font-medium transition-colors disabled:opacity-50',
-    active ? 'bg-primary/15 text-foreground' : 'text-muted-foreground hover:text-foreground',
-  ].join(' ')
 }

@@ -21,9 +21,9 @@ export async function POST(req: NextRequest) {
     }
 
     const logs: string[] = []
-    logs.push('→ Compiling structured entry data...')
-    logs.push('→ Generating CBP Form 3461 fields...')
-    logs.push('→ Awaiting broker approval before filing...')
+    logs.push('→ Compiling pre-filing entry summary...')
+    logs.push('→ Assembling broker review fields...')
+    logs.push('→ Pending broker sign-off before any filing...')
 
     const now = new Date().toISOString()
     const draft: Entry = {
@@ -51,7 +51,7 @@ export async function POST(req: NextRequest) {
       updatedAt: now,
     }
 
-    logs.push('✓ Draft entry assembled · ready for review')
+    logs.push('✓ Pre-filing draft ready for broker review')
     return NextResponse.json({ draft, logs })
   } catch (err) {
     console.error('[agents/draft]', err)

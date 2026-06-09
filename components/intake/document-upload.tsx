@@ -2,21 +2,21 @@
 
 import { useRef, useState, DragEvent } from 'react'
 import { Button } from '@/components/ui/button'
-import { DocType, DOC_LABELS } from '@/lib/types'
+import { DocType, DOC_LABELS, OptionalDocType, OPTIONAL_DOC_LABELS } from '@/lib/types'
 import { cn } from '@/lib/utils'
-import { FileText, UploadCloud, X, ScanLine, Package, Receipt } from 'lucide-react'
+import { FileText, UploadCloud, X, ScanLine, Package, Receipt, FileSpreadsheet, ImageIcon } from 'lucide-react'
 
 const ACCEPT = '.pdf,.png,.jpg,.jpeg,image/png,image/jpeg,application/pdf'
-const MAX_BYTES = 15 * 1024 * 1024 // 15MB POC cap
+const MAX_BYTES = 15 * 1024 * 1024
 
-interface DocumentUploadProps {
-  onAnalyze: (files: Record<DocType, File>) => void
-  disabled: boolean
+export interface DocumentUploadPayload {
+  required: Record<DocType, File>
+  optional: Partial<Record<OptionalDocType, File>>
 }
 
-const slotMeta: Record<DocType, { icon: React.ReactNode; hint: string }> = {
-  packing_list: { icon: <Package className="h-4 w-4" />, hint: 'Cartons · weights · quantities · SKUs' },
-  commercial_invoice: { icon: <Receipt className="h-4 w-4" />, hint: 'Importer · supplier · value · currency' },
+interface DocumentUploadProps {
+  onAnalyze: (payload: DocumentUploadPayload) => void
+  disabled: boolean
 }
 
 function formatSize(bytes: number) {
@@ -25,7 +25,14 @@ function formatSize(bytes: number) {
   return `${(bytes / (1024 * 1024)).toFixed(1)} MB`
 }
 
-function DropSlot({
+function validateFile(file: File): string | null {
+  const okType = /pdf$|image\/(png|jpe?g)$/i.test(file.type) || /\.(pdf|png|jpe?g)$/i.test(file.name)
+  if (!okType) return 'Unsupported file type. Use PDF, PNG or JPG.'
+  if (file.size > MAX_BYTES) return 'File too large (max 15MB for this POC).'
+  return null
+}
+
+function RequiredPicker({
   docType,
   file,
   disabled,
@@ -42,8 +49,11 @@ function DropSlot({
 }) {
   const inputRef = useRef<HTMLInputElement>(null)
   const [dragging, setDragging] = useState(false)
+  const icon = docType === 'commercial_invoice'
+    ? <Receipt className="h-4 w-4" />
+    : <Package className="h-4 w-4" />
 
-  function handleDrop(e: DragEvent<HTMLDivElement>) {
+  function handleDrop(e: DragEvent) {
     e.preventDefault()
     setDragging(false)
     if (disabled) return
@@ -53,11 +63,91 @@ function DropSlot({
 
   return (
     <div>
-      <div className="mb-2 flex items-center gap-2 text-xs font-medium text-foreground">
-        <span className="text-muted-foreground">{slotMeta[docType].icon}</span>
+      <p className="mb-1.5 flex items-center gap-1.5 text-xs font-medium text-foreground">
+        {icon}
         {DOC_LABELS[docType]}
-      </div>
+        <span className="text-red-400">*</span>
+      </p>
+      {file ? (
+        <div className="flex items-center gap-2 rounded-lg border border-emerald-500/30 bg-emerald-950/15 px-3 py-2">
+          <FileText className="h-4 w-4 shrink-0 text-emerald-400" />
+          <div className="min-w-0 flex-1">
+            <p className="truncate text-sm font-medium">{file.name}</p>
+            <p className="text-xs text-muted-foreground">{formatSize(file.size)}</p>
+          </div>
+          {!disabled && (
+            <button type="button" onClick={onClear} className="rounded p-1 text-muted-foreground hover:text-foreground">
+              <X className="h-3.5 w-3.5" />
+            </button>
+          )}
+        </div>
+      ) : (
+        <div
+          role="button"
+          tabIndex={0}
+          onClick={() => !disabled && inputRef.current?.click()}
+          onKeyDown={e => { if ((e.key === 'Enter' || e.key === ' ') && !disabled) inputRef.current?.click() }}
+          onDragOver={e => { e.preventDefault(); if (!disabled) setDragging(true) }}
+          onDragLeave={() => setDragging(false)}
+          onDrop={handleDrop}
+          className={cn(
+            'flex w-full cursor-pointer items-center gap-2 rounded-lg border border-dashed px-3 py-2.5 text-sm text-muted-foreground transition-colors hover:border-primary/40',
+            dragging ? 'border-primary/70 bg-primary/5' : 'border-border',
+            disabled && 'pointer-events-none opacity-60',
+          )}
+        >
+          <UploadCloud className="h-4 w-4" />
+          Drop or browse
+        </div>
+      )}
+      <input
+        ref={inputRef}
+        type="file"
+        accept={ACCEPT}
+        className="hidden"
+        disabled={disabled}
+        onChange={e => {
+          const f = e.target.files?.[0]
+          if (f) onPick(f)
+          e.target.value = ''
+        }}
+      />
+      {error && <p className="mt-1 text-xs text-red-400">{error}</p>}
+    </div>
+  )
+}
 
+function OptionalPicker({
+  docType,
+  file,
+  disabled,
+  onPick,
+  onClear,
+  error,
+}: {
+  docType: OptionalDocType
+  file: File | null
+  disabled: boolean
+  onPick: (file: File) => void
+  onClear: () => void
+  error: string | null
+}) {
+  const inputRef = useRef<HTMLInputElement>(null)
+  const [dragging, setDragging] = useState(false)
+  const icon = docType === 'spec_sheet'
+    ? <FileSpreadsheet className="h-4 w-4" />
+    : <ImageIcon className="h-4 w-4" />
+
+  function handleDrop(e: DragEvent) {
+    e.preventDefault()
+    setDragging(false)
+    if (disabled) return
+    const dropped = e.dataTransfer.files?.[0]
+    if (dropped) onPick(dropped)
+  }
+
+  return (
+    <div>
       <div
         role="button"
         tabIndex={0}
@@ -67,116 +157,131 @@ function DropSlot({
         onDragLeave={() => setDragging(false)}
         onDrop={handleDrop}
         className={cn(
-          'group relative flex min-h-[132px] cursor-pointer flex-col items-center justify-center rounded-xl border border-dashed bg-card/40 px-4 py-5 text-center backdrop-blur-sm transition-colors',
-          dragging ? 'border-primary/70 bg-primary/5' : 'border-border hover:border-primary/40',
-          file && 'border-solid border-emerald-500/30 bg-emerald-950/10',
+          'flex w-full cursor-pointer items-center gap-2 rounded-lg border border-dashed border-border/70 bg-card/30 px-3 py-2.5 text-left text-sm transition-colors hover:border-primary/40',
+          file && 'border-solid border-emerald-500/20',
+          dragging && 'border-primary/70 bg-primary/5',
           disabled && 'pointer-events-none opacity-60',
         )}
       >
-        <input
-          ref={inputRef}
-          type="file"
-          accept={ACCEPT}
-          className="hidden"
-          disabled={disabled}
-          onChange={e => {
-            const f = e.target.files?.[0]
-            if (f) onPick(f)
-            e.target.value = ''
-          }}
-        />
-
-        {file ? (
-          <>
-            <FileText className="h-6 w-6 text-emerald-400" />
-            <p className="mt-2 max-w-full truncate text-sm font-medium text-foreground">{file.name}</p>
-            <p className="text-xs text-muted-foreground">{formatSize(file.size)}</p>
-            {!disabled && (
-              <button
-                type="button"
-                onClick={e => { e.stopPropagation(); onClear() }}
-                className="absolute right-2 top-2 rounded-md p-1 text-muted-foreground transition-colors hover:bg-muted hover:text-foreground"
-                aria-label="Remove file"
-              >
-                <X className="h-3.5 w-3.5" />
-              </button>
-            )}
-          </>
-        ) : (
-          <>
-            <UploadCloud className="h-6 w-6 text-muted-foreground transition-colors group-hover:text-primary" />
-            <p className="mt-2 text-sm text-foreground">
-              Drop file or <span className="text-primary">browse</span>
-            </p>
-            <p className="mt-0.5 text-xs text-muted-foreground/70">PDF, PNG or JPG · {slotMeta[docType].hint}</p>
-          </>
+        <span className="text-muted-foreground">{icon}</span>
+        <span className="flex-1 truncate text-muted-foreground">
+          {file ? file.name : OPTIONAL_DOC_LABELS[docType]}
+        </span>
+        {file && !disabled && (
+          <button
+            type="button"
+            onClick={e => { e.stopPropagation(); onClear() }}
+            className="rounded p-0.5 text-muted-foreground hover:text-foreground"
+          >
+            <X className="h-3.5 w-3.5" />
+          </button>
         )}
       </div>
-      {error && <p className="mt-1.5 text-xs text-red-400">{error}</p>}
+      <input
+        ref={inputRef}
+        type="file"
+        accept={ACCEPT}
+        className="hidden"
+        disabled={disabled}
+        onChange={e => {
+          const f = e.target.files?.[0]
+          if (f) onPick(f)
+          e.target.value = ''
+        }}
+      />
+      {error && <p className="mt-1 text-xs text-red-400">{error}</p>}
     </div>
   )
 }
 
 export function DocumentUpload({ onAnalyze, disabled }: DocumentUploadProps) {
-  const [files, setFiles] = useState<Record<DocType, File | null>>({
+  const [required, setRequired] = useState<Record<DocType, File | null>>({
     packing_list: null,
     commercial_invoice: null,
   })
-  const [errors, setErrors] = useState<Record<DocType, string | null>>({
-    packing_list: null,
-    commercial_invoice: null,
+  const [optional, setOptional] = useState<Record<OptionalDocType, File | null>>({
+    spec_sheet: null,
+    product_image: null,
   })
+  const [errors, setErrors] = useState<Record<string, string | null>>({})
 
-  function pick(docType: DocType, file: File) {
-    const okType = /pdf$|image\/(png|jpe?g)$/i.test(file.type) || /\.(pdf|png|jpe?g)$/i.test(file.name)
-    if (!okType) {
-      setErrors(p => ({ ...p, [docType]: 'Unsupported file type. Use PDF, PNG or JPG.' }))
-      return
-    }
-    if (file.size > MAX_BYTES) {
-      setErrors(p => ({ ...p, [docType]: 'File too large (max 15MB for this POC).' }))
-      return
-    }
+  function assignRequired(docType: DocType, file: File) {
+    const err = validateFile(file)
+    if (err) { setErrors(p => ({ ...p, [docType]: err })); return }
     setErrors(p => ({ ...p, [docType]: null }))
-    setFiles(p => ({ ...p, [docType]: file }))
+    setRequired(p => ({ ...p, [docType]: file }))
   }
 
-  function clear(docType: DocType) {
-    setFiles(p => ({ ...p, [docType]: null }))
+  function assignOptional(docType: OptionalDocType, file: File) {
+    const err = validateFile(file)
+    if (err) { setErrors(p => ({ ...p, [docType]: err })); return }
     setErrors(p => ({ ...p, [docType]: null }))
+    setOptional(p => ({ ...p, [docType]: file }))
   }
 
-  const ready = !!files.packing_list && !!files.commercial_invoice
+  const ready = !!required.packing_list && !!required.commercial_invoice
 
   return (
-    <div className="rounded-xl border border-border bg-card/60 p-5 backdrop-blur-sm">
-      <div className="grid gap-4 sm:grid-cols-2">
-        {(['packing_list', 'commercial_invoice'] as DocType[]).map(docType => (
-          <DropSlot
+    <div className="rounded-xl border border-border bg-card/60 p-5 backdrop-blur-sm space-y-5">
+      <div>
+        <p className="text-sm font-medium text-foreground">Upload shipment documents</p>
+        <p className="mt-0.5 text-xs text-muted-foreground">
+          PDF, PNG or JPG · max 15MB per file
+        </p>
+      </div>
+
+      <div className="grid gap-3 sm:grid-cols-2">
+        {(['commercial_invoice', 'packing_list'] as DocType[]).map(docType => (
+          <RequiredPicker
             key={docType}
             docType={docType}
-            file={files[docType]}
+            file={required[docType]}
             disabled={disabled}
-            error={errors[docType]}
-            onPick={f => pick(docType, f)}
-            onClear={() => clear(docType)}
+            onPick={f => assignRequired(docType, f)}
+            onClear={() => setRequired(p => ({ ...p, [docType]: null }))}
+            error={errors[docType] ?? null}
           />
         ))}
       </div>
 
-      <div className="mt-5 flex items-center justify-between gap-3">
-        <span className="flex items-center gap-1.5 text-xs text-muted-foreground">
-          <ScanLine className="h-3.5 w-3.5 text-primary/70" />
-          Vision OCR · cross-document reconciliation
-        </span>
+      <div>
+        <p className="mb-2 text-xs font-medium uppercase tracking-wider text-muted-foreground">Optional attachments</p>
+        <div className="grid gap-2 sm:grid-cols-2">
+          {(['spec_sheet', 'product_image'] as OptionalDocType[]).map(docType => (
+            <OptionalPicker
+              key={docType}
+              docType={docType}
+              file={optional[docType]}
+              disabled={disabled}
+              onPick={f => assignOptional(docType, f)}
+              onClear={() => setOptional(p => ({ ...p, [docType]: null }))}
+              error={errors[docType] ?? null}
+            />
+          ))}
+        </div>
+      </div>
+
+      <div className="flex justify-end">
         <Button
-          onClick={() => ready && onAnalyze(files as Record<DocType, File>)}
+          onClick={() => {
+            if (!ready) return
+            const opt: Partial<Record<OptionalDocType, File>> = {}
+            if (optional.spec_sheet) opt.spec_sheet = optional.spec_sheet
+            if (optional.product_image) opt.product_image = optional.product_image
+            onAnalyze({
+              required: {
+                packing_list: required.packing_list!,
+                commercial_invoice: required.commercial_invoice!,
+              },
+              optional: opt,
+            })
+          }}
           disabled={!ready || disabled}
           size="lg"
           className="gap-1.5 bg-primary text-primary-foreground shadow-[0_0_18px_-6px_var(--color-primary)] hover:bg-primary/90"
         >
           <ScanLine className="h-4 w-4" />
-          Analyze documents
+          Review shipment
         </Button>
       </div>
     </div>

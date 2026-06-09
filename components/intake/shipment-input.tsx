@@ -2,7 +2,7 @@
 
 import { useEffect, useRef, useState } from 'react'
 import { Button } from '@/components/ui/button'
-import { ArrowUp, Sparkles } from 'lucide-react'
+import { ArrowUp } from 'lucide-react'
 
 interface ShipmentInputProps {
   onSubmit: (input: string) => void
@@ -68,8 +68,7 @@ export function ShipmentInput({ onSubmit, disabled }: ShipmentInputProps) {
         />
         <div className="flex items-center justify-between gap-3 px-1.5 pb-1 pt-1">
           <span className="flex items-center gap-1.5 text-xs text-muted-foreground">
-            <Sparkles className="h-3.5 w-3.5 text-primary/70" />
-            AI agent pipeline · vector RAG
+            Manual entry — use when documents aren&apos;t available yet
           </span>
           <div className="flex items-center gap-2.5">
             <kbd className="hidden rounded border border-border bg-muted/60 px-1.5 py-0.5 font-mono text-[10px] text-muted-foreground sm:inline-block">
@@ -81,7 +80,7 @@ export function ShipmentInput({ onSubmit, disabled }: ShipmentInputProps) {
               size="sm"
               className="h-8 gap-1.5 rounded-lg bg-primary px-3 text-primary-foreground shadow-[0_0_18px_-6px_var(--color-primary)] hover:bg-primary/90"
             >
-              Run pipeline
+              Start review
               <ArrowUp className="h-3.5 w-3.5" />
             </Button>
           </div>

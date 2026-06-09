@@ -1,25 +1,21 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { chatJSON } from '@/lib/ai'
 
-const SYSTEM_PROMPT = `You are a US customs compliance specialist. Given HTS code, origin country, product name, and description, assess compliance risk. Respond with valid JSON only — no markdown, no explanation.
+const SYSTEM_PROMPT = `You are a cautious US customs compliance reviewer assisting a licensed broker. Given HTS code, origin country, product name, and description, assess possible compliance flags. Respond with valid JSON only — no markdown.
 
 Required fields:
 - riskLevel: "Low" | "Medium" | "High"
 - reviewRequired: boolean
-- reviewReason: string (empty string if reviewRequired is false)
-- requiredDocs: string[] (list of CBP-required documents, e.g. ["Commercial Invoice", "Packing List", "Bill of Lading"])
-- explanation: string (2-3 sentences: compliance rationale, any flagged regulations, screening results)
+- reviewReason: string (empty if reviewRequired is false — use operational language like "Agricultural product from overseas origin — broker should verify agency requirements", NOT legal citations)
+- requiredDocs: string[] (prefix each item with "Possible: " when agency-specific, e.g. "Possible: FDA Prior Notice", "Commercial Invoice", "Packing List")
+- explanation: string (2-3 sentences, tentative tone — use "may apply", "recommend verifying", never "is required" or "mandatory")
 
 Rules:
-- HIGH risk: Chinese-origin electronics/batteries (Section 301 + dual-use concerns), CITES-protected species, FDA-regulated food/drugs/devices, DOT hazmat, ECCN-controlled items, high-value electronics > $10k
-- MEDIUM risk: textiles/apparel from any origin, steel/aluminum, agricultural products, cosmetics, supplements
-- LOW risk: USMCA-eligible goods from Mexico/Canada, standard industrial components, general merchandise < $2500
-- Required documents always include: "Commercial Invoice", "Packing List", "Bill of Lading" or "Airway Bill"
-- Add "Certificate of Origin" for USMCA claims
-- Add "Importer Security Filing (ISF 10+2)" for ocean shipments
-- Add "Dangerous Goods Declaration" for hazmat/batteries
-- Add "FDA Prior Notice" for food/drug/device imports
-- Screening: CBP CATAIR, ECCN, FDA/DOT hazmat flags, watchlist`
+- Never assert definitive regulatory requirements — you are flagging items for broker verification
+- Do NOT cite FSMA, Bioterrorism Act, CGMP, CATAIR, or ECCN unless the product clearly matches and phrased as "may apply"
+- HIGH risk → reviewRequired true with plain operational reviewReason
+- Always include standard docs without "Possible:" prefix: "Commercial Invoice", "Packing List", "Bill of Lading" or "Airway Bill"
+- Agency-specific docs use "Possible:" prefix`
 
 export async function POST(req: NextRequest) {
   try {
@@ -29,8 +25,8 @@ export async function POST(req: NextRequest) {
     }
 
     const logs: string[] = []
-    logs.push('→ Screening CBP CATAIR restrictions...')
-    logs.push('→ Checking ECCN · FDA / DOT hazmat flags...')
+    logs.push('→ Screening import restrictions...')
+    logs.push('→ Checking FDA · DOT · agricultural flags...')
 
     let result: Record<string, unknown>
     try {
@@ -44,8 +40,8 @@ export async function POST(req: NextRequest) {
       return NextResponse.json({ error: 'AI service error' }, { status: 500 })
     }
 
-    logs.push('→ Verifying import restrictions · watchlist check...')
-    logs.push('✓ Risk level assessed · required docs generated')
+    logs.push('→ Verifying regulatory requirements...')
+    logs.push('✓ Compliance review complete')
     return NextResponse.json({ ...result, logs })
   } catch (err) {
     console.error('[agents/compliance]', err)

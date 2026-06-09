@@ -1,6 +1,6 @@
 # Traceer
 
-**Autonomous customs operations for brokers.** Describe a shipment in plain English and a pipeline of AI agents classifies the HTS code, prices the duty, screens compliance, and drafts a CBP entry — grounded in a vector knowledge base and persisted live to Postgres.
+**AI copilot for customs document review.** Upload shipment documents to detect missing paperwork, compliance risks, and filing issues before submission — then optionally generate a pre-filing draft for broker review.
 
 Built for the **InsForge Hackathon** (_Build Something Interesting_ track).
 

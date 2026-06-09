@@ -188,7 +188,7 @@ export function reconcileQuantities(pl: ExtractedDoc, inv: ExtractedDoc): Quanti
         match: true,
         plNorm,
         invNorm,
-        message: `Quantities reconcile: ${plNorm.trail} = ${invNorm.trail} (${plKg.toLocaleString()} kg / ${plMt.toFixed(2)} MT)`,
+        message: `Quantities reconcile: ${formatReconciledTrail(enriched.pl, enriched.inv, plMt)} (${plKg.toLocaleString()} kg)`,
       }
     }
   }
@@ -219,6 +219,52 @@ export function formatQuantityDisplay(doc: ExtractedDoc): string {
     return `${norm.display} → ${norm.mt?.toFixed(2)} MT`
   }
   return norm.display
+}
+
+/** Concise cross-document equivalence, e.g. "2,880 BAG × 25 kg = 72 MT". */
+function formatReconciledTrail(pl: ExtractedDoc, inv: ExtractedDoc, mt: number): string {
+  const plUnit = normalizeUnit(pl.quantityUnit)
+  const invUnit = normalizeUnit(inv.quantityUnit)
+  const plQty = pl.quantity !== null
+    ? `${pl.quantity.toLocaleString()}${plUnit ? ` ${plUnit}` : ''}`
+    : null
+  const invQty = inv.quantity !== null
+    ? `${inv.quantity.toLocaleString()}${invUnit ? ` ${invUnit}` : ''}`
+    : null
+
+  if (plQty && invQty && plUnit !== invUnit) {
+    if (pl.packUnitKg && plUnit && COUNT_UNITS.has(plUnit)) {
+      const label = pl.packUnitLabel ?? 'unit'
+      return `${plQty} × ${pl.packUnitKg} kg/${label} = ${invQty}`
+    }
+    return `${plQty} = ${invQty}`
+  }
+
+  if (plQty) return plQty
+  if (invQty) return invQty
+  return `${mt.toFixed(2)} MT`
+}
+
+/** UI display for reconciled quantity — avoids repeating kg/MT in the trail. */
+export function formatReconciledQuantity(
+  pl: ExtractedDoc,
+  inv: ExtractedDoc,
+  result: QuantityReconcileResult,
+): string {
+  if (!result.match || result.plNorm.mt == null) {
+    return `${formatQuantityDisplay(pl)} / ${formatQuantityDisplay(inv)}`
+  }
+
+  const mt = result.plNorm.mt.toFixed(2)
+  const trail = formatReconciledTrail(pl, inv, result.plNorm.mt)
+  const plUnit = normalizeUnit(pl.quantityUnit)
+  const invUnit = normalizeUnit(inv.quantityUnit)
+
+  if (plUnit !== invUnit && pl.quantity !== null && inv.quantity !== null) {
+    return `${mt} MT (${trail})`
+  }
+
+  return `${mt} MT`
 }
 
 // ── COO inference (supplier country ≠ country of origin) ───────────────────────
@@ -321,6 +367,28 @@ function pickNonEmpty(a: string | null, b: string | null): string | null {
 function textsDiffer(a: string | null, b: string | null): boolean {
   if (!a || !b) return false
   return a.trim().toLowerCase() !== b.trim().toLowerCase()
+}
+
+// ── Address normalization ────────────────────────────────────────────────────
+
+/** Strip contact info and punctuation noise so OCR variants compare cleanly. */
+export function normalizeAddress(raw: string | null): string | null {
+  if (!raw?.trim()) return null
+  const stripped = raw
+    .replace(/\b(tel|fax|phone|telephone)\b.*$/gi, '')
+    .toLowerCase()
+    .replace(/[.,#]/g, ' ')
+    .replace(/\s+/g, ' ')
+    .trim()
+  return stripped || null
+}
+
+/** True when both addresses are present and differ after normalization. */
+export function addressesDiffer(a: string | null, b: string | null): boolean {
+  const na = normalizeAddress(a)
+  const nb = normalizeAddress(b)
+  if (!na || !nb) return false
+  return na !== nb
 }
 
 export function fmtNum(n: number | null): string {

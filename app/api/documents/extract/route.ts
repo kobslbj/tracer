@@ -8,7 +8,9 @@ const SYSTEM_PROMPT = `You are a customs document OCR + extraction specialist. Y
 Required JSON shape:
 {
   "importer": string | null,
+  "importerAddress": string | null,
   "supplier": string | null,
+  "supplierAddress": string | null,
   "coo": string | null,
   "totalValue": number | null,
   "currency": string | null,
@@ -27,6 +29,12 @@ Required JSON shape:
 }
 
 Critical rules:
+
+PARTIES (name vs address — extract separately):
+- importer: Messrs / Buyer / Consignee company name ONLY (e.g. "MIT CEREAL CO., LTD").
+- importerAddress: street address printed under Messrs — city, country included; do NOT include TEL/FAX/phone lines.
+- supplier: document header Issuer / Exporter company name ONLY (e.g. "WEL & CO., LTD").
+- supplierAddress: street address under the header issuer block — do NOT include TEL/FAX/phone lines.
 
 QUANTITY + UNIT (most important):
 - Always extract quantity AND quantityUnit separately. Never merge them.
@@ -114,7 +122,9 @@ export async function POST(req: NextRequest) {
     const extracted: ExtractedDoc = {
       docType,
       importer: str(parsed.importer),
+      importerAddress: str(parsed.importerAddress),
       supplier: str(parsed.supplier),
+      supplierAddress: str(parsed.supplierAddress),
       coo: str(parsed.coo),
       totalValue: num(parsed.totalValue),
       currency: str(parsed.currency),

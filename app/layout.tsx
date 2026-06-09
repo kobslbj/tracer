@@ -17,8 +17,8 @@ const jetbrainsMono = JetBrains_Mono({
 });
 
 export const metadata: Metadata = {
-  title: "Tracer — AI Customs Operations",
-  description: "AI-powered customs entry processing for brokers",
+  title: "Tracer — AI Customs Document Review",
+  description: "AI copilot for customs document review — detect missing paperwork, compliance risks, and filing issues before submission",
 };
 
 export default function RootLayout({

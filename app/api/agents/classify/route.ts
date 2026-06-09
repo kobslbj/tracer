@@ -51,11 +51,11 @@ export async function POST(req: NextRequest) {
     logs.push('→ Parsing product description...')
     let htsContext = ''
     try {
-      logs.push('→ Querying InsForge vector store (hts_knowledge)...')
+      logs.push('→ Checking tariff classification references...')
       const queryEmbedding = await embed(input)
       const matches = await searchHtsKnowledge(queryEmbedding)
       if (matches.length > 0) {
-        logs.push(`→ Retrieved ${matches.length} candidate tariff classifications...`)
+        logs.push(`→ Found ${matches.length} potential HTS matches...`)
         htsContext = '\n\nRelevant HTS knowledge base matches (from pgvector semantic search):\n' +
           matches.map((m, i) =>
             `${i + 1}. HTS ${m.hts_code} (similarity: ${(m.similarity * 100).toFixed(1)}%)\n` +
@@ -66,10 +66,10 @@ export async function POST(req: NextRequest) {
       }
     } catch (embErr) {
       console.warn('[agents/classify] embedding/vector search failed:', embErr)
-      logs.push('→ Vector search unavailable, proceeding without context...')
+      logs.push('→ Classification references unavailable, proceeding...')
     }
 
-    logs.push('→ Matching chapter headings · verifying Schedule B...')
+    logs.push('→ Verifying HTS subheading...')
     const userMessage = htsContext
       ? `Classify this shipment:\n\n${input}${htsContext}`
       : `Classify this shipment:\n\n${input}`
@@ -82,7 +82,7 @@ export async function POST(req: NextRequest) {
       return NextResponse.json({ error: 'AI service error' }, { status: 500 })
     }
 
-    logs.push('✓ HTS code confirmed · GRI rules applied')
+    logs.push('✓ Classification review complete')
     return NextResponse.json({ ...result, logs })
   } catch (err) {
     console.error('[agents/classify]', err)

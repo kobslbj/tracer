@@ -8,15 +8,15 @@ import { cn } from '@/lib/utils'
 
 const navItems = [
   { href: '/intake', label: 'New Shipment' },
-  { href: '/dashboard', label: 'Dashboard' },
+  { href: '/dashboard', label: 'Review Queue' },
 ]
 
 export function TopNav() {
   const pathname = usePathname()
   const { state } = useStore()
 
-  const activeCount = state.entries.filter(
-    e => e.status === 'Review' || e.status === 'Filing'
+  const attentionCount = state.entries.filter(
+    e => e.status === 'needs_attention' || e.status === 'waiting_on_docs',
   ).length
 
   return (
@@ -59,7 +59,7 @@ export function TopNav() {
             <span className="relative inline-flex h-1.5 w-1.5 rounded-full bg-emerald-400" />
           </span>
           <span className="tabular-nums">
-            {activeCount > 0 ? `${activeCount} active` : 'Live'}
+            {attentionCount > 0 ? `${attentionCount} need attention` : 'Live'}
           </span>
         </div>
       </div>
