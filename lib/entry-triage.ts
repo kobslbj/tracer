@@ -13,6 +13,7 @@ import {
   deriveMissingItems,
   tagAllIssues,
 } from './shipment-review'
+import { deriveCoordinationState } from './shipment-timeline'
 
 export type ResolutionFilter = 'active' | 'ready_to_submit'
 
@@ -112,32 +113,32 @@ function deriveSuggestedActions(
     } else if (/phytosanitary/i.test(item.message)) {
       actions.push('Awaiting phytosanitary certificate')
     } else if (/fda/i.test(item.message)) {
-      actions.push('FDA prior notice — pending verification')
+      actions.push('Awaiting FDA prior notice — broker to verify')
     } else {
       actions.push(`Awaiting ${item.label} from supplier`)
     }
   }
 
   if (entry.reviewRequired) {
-    actions.push('Classification review required')
+    actions.push('Awaiting broker classification verification')
   }
 
   const regulatory = issues.filter(i => i.code.startsWith('regulatory_'))
   for (const issue of regulatory) {
     const action = issue.message.includes('FCC')
-      ? 'FCC certification — pending verification'
+      ? 'Awaiting FCC certification — broker to verify'
       : issue.message.includes('FDA')
-        ? 'FDA requirements — pending verification'
+        ? 'Awaiting FDA requirements — broker to verify'
         : null
     if (action && !actions.includes(action)) actions.push(action)
   }
 
   if (actions.length === 0 && entry.requiredDocs.length > 0) {
-    actions.push(`Confirm ${entry.requiredDocs[0]}`)
+    actions.push(`Awaiting ${entry.requiredDocs[0]} confirmation`)
   }
 
   if (actions.length === 0) {
-    actions.push('Broker review required before filing')
+    actions.push('Awaiting broker review before filing')
   }
 
   return [...new Set(actions)].slice(0, 5)
@@ -268,6 +269,14 @@ export function deriveTriageRow(entry: Entry): TriageRow {
   const primaryStatus = resolved ? null : derivePrimaryStatus(snapshot, entry)
   const primaryAction = snapshot.suggestedActions[0] ?? 'Review shipment'
 
+  const timeline = entry.timeline ?? []
+  const waitingOn = snapshot.missingItems.map(m => m.label)
+  const coordination = deriveCoordinationState(timeline, waitingOn)
+  const coordinationLine =
+    timeline.length > 0 && coordination.coordinationLine !== 'No follow-up logged yet'
+      ? coordination.coordinationLine
+      : null
+
   return {
     entryId: entry.id,
     shipment: entry.productName,
@@ -275,6 +284,7 @@ export function deriveTriageRow(entry: Entry): TriageRow {
     tags: deriveTags(entry, snapshot),
     actionNeeded: primaryAction,
     isResolved: resolved,
+    coordinationLine,
   }
 }
 

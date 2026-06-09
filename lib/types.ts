@@ -218,6 +218,7 @@ export interface TriageRow {
   tags: string[]
   actionNeeded: string
   isResolved: boolean
+  coordinationLine?: string | null
 }
 
 export type FieldStatus = 'ok' | 'missing' | 'mismatch'

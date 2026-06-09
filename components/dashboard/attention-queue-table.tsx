@@ -132,6 +132,11 @@ export function AttentionQueueTable({
                     <p className={cn('truncate text-foreground', compact ? 'text-[11px]' : 'text-sm')}>
                       <span className="text-muted-foreground mr-1">→</span>{row.actionNeeded}
                     </p>
+                    {!compact && row.coordinationLine && (
+                      <p className="truncate text-[10px] text-muted-foreground mt-0.5">
+                        {row.coordinationLine}
+                      </p>
+                    )}
                   </TableCell>
                 </motion.tr>
               )
