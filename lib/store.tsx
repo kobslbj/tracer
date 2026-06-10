@@ -3,6 +3,7 @@
 import { createContext, useContext, useReducer, useEffect, ReactNode } from 'react'
 import { Entry, AgentStatus, AgentPhase } from './types'
 import { fetchEntries } from './insforge-db'
+import { useAuth } from './auth'
 
 interface AppState {
   entries: Entry[]
@@ -76,13 +77,19 @@ const StoreContext = createContext<{
 
 export function StoreProvider({ children }: { children: ReactNode }) {
   const [state, dispatch] = useReducer(reducer, initialState)
+  const { user, loading: authLoading } = useAuth()
 
-  // Bootstrap: load entries from InsForge on mount
+  // Load entries only after auth resolves — RLS scopes to workspace
   useEffect(() => {
+    if (authLoading) return
+    if (!user) {
+      dispatch({ type: 'SET_ENTRIES', entries: [] })
+      return
+    }
     fetchEntries().then(entries => {
-      if (entries.length > 0) dispatch({ type: 'SET_ENTRIES', entries })
+      dispatch({ type: 'SET_ENTRIES', entries })
     })
-  }, [])
+  }, [authLoading, user])
 
   return (
     <StoreContext.Provider value={{ state, dispatch }}>

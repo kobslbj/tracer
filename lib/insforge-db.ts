@@ -33,6 +33,7 @@ function rowToEntry(row: Record<string, unknown>): Entry {
     brokerCorrections: (row.broker_corrections as BrokerCorrection[]) ?? undefined,
     supplementaryDocs: (row.supplementary_docs as SupplementaryDoc[]) ?? undefined,
     uploadedDocs: (row.uploaded_docs as UploadedDocs) ?? undefined,
+    workspaceId: (row.workspace_id as string) ?? undefined,
     createdAt: row.created_at as string,
     updatedAt: row.updated_at as string,
   }
@@ -48,9 +49,10 @@ export async function fetchEntries(): Promise<Entry[]> {
   return (data as Record<string, unknown>[]).map(rowToEntry)
 }
 
-export async function insertEntry(entry: Entry): Promise<void> {
+export async function insertEntry(entry: Entry, workspaceId: string): Promise<void> {
   const { error } = await insforge.database.from('entries').insert([{
     id: entry.id,
+    workspace_id: workspaceId,
     entry_no: entry.entryNo,
     port: entry.port,
     port_of_discharge: entry.portOfDischarge ?? null,
@@ -204,8 +206,10 @@ export async function insertDocumentSet(
   invoice: ExtractedDoc,
   result: ReconcileResult,
   files: DocFileMeta,
+  workspaceId: string,
 ): Promise<string | null> {
   const { data, error } = await insforge.database.from('document_sets').insert([{
+    workspace_id: workspaceId,
     importer: pick(invoice.importer, packingList.importer),
     supplier: pick(invoice.supplier, packingList.supplier),
     coo: pick(packingList.coo, invoice.coo),

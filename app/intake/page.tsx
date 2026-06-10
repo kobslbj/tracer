@@ -4,7 +4,9 @@ import { useState, useCallback, useRef, Suspense, useMemo } from 'react'
 import { useRouter, useSearchParams } from 'next/navigation'
 import { motion, AnimatePresence } from 'framer-motion'
 import { useStore } from '@/lib/store'
-import { insertEntry, saveEntryReviewUpdate } from '@/lib/insforge-db'
+import { useAuth } from '@/lib/auth'
+import { insertEntry, insertDocumentSet, saveEntryReviewUpdate } from '@/lib/insforge-db'
+import { uploadWorkspaceFile } from '@/lib/storage'
 import { buildReviewSnapshot, derivePrimaryStatus } from '@/lib/entry-triage'
 import { computeIssueListDelta } from '@/lib/review-delta'
 import { eventsForReviewSave, prependTimelineEvents, createFollowupDraftedEvent } from '@/lib/shipment-timeline'
@@ -35,6 +37,10 @@ function readAsDataUrl(file: File): Promise<string> {
   })
 }
 
+function newDraftEntryId(): string {
+  return `ent-${Date.now()}`
+}
+
 export default function IntakePage() {
   return (
     <Suspense fallback={<div className="mx-auto max-w-3xl px-6 py-12 text-sm text-muted-foreground">Loading…</div>}>
@@ -47,8 +53,10 @@ function IntakePageContent() {
   const router = useRouter()
   const searchParams = useSearchParams()
   const { state, dispatch } = useStore()
+  const { workspaceId } = useAuth()
 
   const [docPhase, setDocPhase] = useState<DocPhase>('idle')
+  const [draftEntryId, setDraftEntryId] = useState<string | null>(null)
   const [docLogs, setDocLogs] = useState<string[]>([])
   const [docError, setDocError] = useState<string | null>(null)
   const [extracted, setExtracted] = useState<{ packingList: ExtractedDoc; invoice: ExtractedDoc } | null>(null)
@@ -84,24 +92,11 @@ function IntakePageContent() {
     setDocLogs(prev => [...prev, line])
   }, [])
 
-  async function uploadDoc(file: File): Promise<{ url?: string; key?: string }> {
-    const dataUrl = await readAsDataUrl(file)
-    const res = await fetch('/api/documents/upload', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({
-        fileBase64: dataUrl,
-        mimeType: file.type || 'application/pdf',
-        filename: file.name,
-      }),
-    })
-    if (!res.ok) {
-      const err = await res.json().catch(() => ({}))
-      throw new Error(err.error ?? `Storage upload failed (${res.status})`)
-    }
-    const data = await res.json()
-    if (data.logs?.length) data.logs.forEach((l: string) => pushDocLog(l))
-    return { url: data.url, key: data.key }
+  async function uploadDoc(file: File, entryId: string): Promise<{ url?: string; key?: string }> {
+    if (!workspaceId) throw new Error('Workspace not ready — please sign in again')
+    const { url, key } = await uploadWorkspaceFile(workspaceId, entryId, file)
+    pushDocLog(`✓ Uploaded ${file.name} → customs-docs/${key}`)
+    return { url, key }
   }
 
   async function extractDoc(docType: DocType, file: File): Promise<ExtractedDoc> {
@@ -121,6 +116,15 @@ function IntakePageContent() {
   }
 
   async function runDocumentFlow(payload: DocumentUploadPayload) {
+    if (!workspaceId) {
+      setDocError('Workspace not ready — please sign in again.')
+      setDocPhase('error')
+      return
+    }
+
+    const entryId = resumingEntry?.id ?? newDraftEntryId()
+    setDraftEntryId(entryId)
+
     setDocPhase('processing')
     setDocError(null)
     setDocLogs([])
@@ -134,7 +138,7 @@ function IntakePageContent() {
     try {
       pushDocLog('→ Uploading documents...')
       const [plFile, invFile] = [payload.required.packing_list, payload.required.commercial_invoice]
-      const [plMeta, invMeta] = await Promise.all([uploadDoc(plFile), uploadDoc(invFile)])
+      const [plMeta, invMeta] = await Promise.all([uploadDoc(plFile, entryId), uploadDoc(invFile, entryId)])
 
       const fileMeta: DocFileMeta = {
         packingListKey: plMeta.key,
@@ -178,17 +182,8 @@ function IntakePageContent() {
       }
       priorIssuesRef.current = result.issues
 
-      const persistRes = await fetch('/api/documents/persist', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ packingList, invoice, result, files: fileMeta }),
-      })
-      if (!persistRes.ok) {
-        const err = await persistRes.json().catch(() => ({}))
-        throw new Error(err.error ?? `Failed to save document set (${persistRes.status})`)
-      }
-      const persistData = await persistRes.json()
-      if (persistData.logs?.length) persistData.logs.forEach((l: string) => pushDocLog(l))
+      await insertDocumentSet(packingList, invoice, result, fileMeta, workspaceId)
+      pushDocLog('✓ Saved reconciliation to InsForge (document_sets)')
 
       setUploadedFiles(fileMeta)
       setDocPhase('done')
@@ -204,7 +199,7 @@ function IntakePageContent() {
   }
 
   async function handleSaveShipment() {
-    if (!extracted || !reconcile) return
+    if (!extracted || !reconcile || !workspaceId) return
 
     const uploadedDocs = uploadedFiles ? docFileMetaToUploaded(uploadedFiles) : undefined
     const base = buildEntryFromDocs(
@@ -219,7 +214,9 @@ function IntakePageContent() {
             createdAt: resumingEntry.createdAt,
             timeline: resumingEntry.timeline,
           }
-        : undefined,
+        : draftEntryId
+          ? { id: draftEntryId }
+          : undefined,
     )
 
     const previousSnapshot = resumingEntry?.reviewSnapshot ?? null
@@ -257,8 +254,8 @@ function IntakePageContent() {
         }
         const reviewEvents = eventsForReviewSave(null, entry)
         entry.timeline = prependTimelineEvents(pendingTimeline, reviewEvents)
-        await insertEntry(entry)
-        dispatch({ type: 'APPROVE_ENTRY', entry })
+        await insertEntry({ ...entry, workspaceId }, workspaceId)
+        dispatch({ type: 'APPROVE_ENTRY', entry: { ...entry, workspaceId } })
       }
     } catch (err) {
       console.error('[handleSaveShipment]', err)
@@ -276,14 +273,14 @@ function IntakePageContent() {
   return (
     <div className="mx-auto max-w-3xl px-6 py-12">
       <div className="mb-8">
-        <p className="text-xs font-medium uppercase tracking-wider text-primary/80">Pre-filing coordination</p>
+        <p className="text-xs font-medium uppercase tracking-wider text-primary/80">Document intake</p>
         <h1 className="mt-1 text-2xl font-semibold tracking-tight text-foreground">
-          {resumingEntry ? 'Revised document uploaded' : 'What blocks this shipment?'}
+          {resumingEntry ? 'Document re-review' : 'Shipment document review'}
         </h1>
         <p className="mt-1.5 text-sm text-muted-foreground">
           {resumingEntry
-            ? `Re-checking ${resumingEntry.productName} — review delta tracks what changed.`
-            : 'Upload Invoice + Packing List. See what\'s missing, who to follow up with, and when it\'s ready.'}
+            ? `Re-checking ${resumingEntry.productName}. Review delta records resolved, pending, and newly detected items.`
+            : 'Commercial invoice and packing list required. Cross-document validation, missing item detection, and readiness status.'}
         </p>
       </div>
 

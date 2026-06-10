@@ -1,0 +1,5 @@
+[auth]
+allowed_redirect_urls = [
+  "http://localhost:3000/intake",
+  "http://localhost:3000/sign-in",
+]

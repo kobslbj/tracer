@@ -17,7 +17,7 @@ export function buildEntryFromDocs(
   inv: ExtractedDoc,
   reconcile: ReconcileResult,
   uploadedDocs?: UploadedDocs,
-  existing?: Pick<Entry, 'id' | 'entryNo' | 'createdAt' | 'timeline'>,
+  existing?: Partial<Pick<Entry, 'entryNo' | 'createdAt' | 'timeline'>> & { id?: string },
 ): Entry {
   const overrides = entryOverridesFromDocs(pl, inv, reconcile)
   const product = overrides.productName ?? 'Shipment'

@@ -11,20 +11,15 @@ import {
   supplementaryDocLabel,
 } from '@/lib/supplementary-docs'
 import { saveSupplementaryDoc } from '@/lib/insforge-db'
+import { useAuth } from '@/lib/auth'
+import { uploadWorkspaceFile } from '@/lib/storage'
+import { DocumentPreviewDialog } from '@/components/entry/document-preview-dialog'
 import { cn } from '@/lib/utils'
 import { ChevronDown, FileText, Plus, Upload } from 'lucide-react'
 
 const ACCEPT = '.pdf,.png,.jpg,.jpeg,image/png,image/jpeg,application/pdf'
 const MAX_BYTES = 15 * 1024 * 1024
 
-function readAsDataUrl(file: File): Promise<string> {
-  return new Promise((resolve, reject) => {
-    const reader = new FileReader()
-    reader.onload = () => resolve(reader.result as string)
-    reader.onerror = () => reject(reader.error)
-    reader.readAsDataURL(file)
-  })
-}
 
 interface AddSupportingDocumentProps {
   entryId: string
@@ -49,7 +44,10 @@ export function AddSupportingDocument({
   const [file, setFile] = useState<File | null>(null)
   const [error, setError] = useState<string | null>(null)
   const [saving, setSaving] = useState(false)
+  const [previewKey, setPreviewKey] = useState<string | null>(null)
+  const [previewTitle, setPreviewTitle] = useState('')
   const inputRef = useRef<HTMLInputElement>(null)
+  const { workspaceId } = useAuth()
 
   async function handleSubmit(e: React.FormEvent) {
     e.preventDefault()
@@ -66,24 +64,20 @@ export function AddSupportingDocument({
       return
     }
 
+    if (!workspaceId) {
+      setError('Workspace not ready — please sign in again.')
+      return
+    }
+
     setSaving(true)
     setError(null)
     try {
-      const dataUrl = await readAsDataUrl(file)
-      const uploadRes = await fetch('/api/documents/upload', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          fileBase64: dataUrl,
-          mimeType: file.type || 'application/pdf',
-          filename: file.name,
-        }),
-      })
-      if (!uploadRes.ok) {
-        const err = await uploadRes.json().catch(() => ({}))
-        throw new Error(err.error ?? 'Upload failed')
-      }
-      const { url, key } = await uploadRes.json()
+      const { url, key } = await uploadWorkspaceFile(
+        workspaceId,
+        entryId,
+        file,
+        'supplementary',
+      )
 
       const doc = createSupplementaryDoc({
         docType,
@@ -123,14 +117,16 @@ export function AddSupportingDocument({
               <li key={doc.id} className="flex items-start gap-2 text-xs">
                 <FileText className="mt-0.5 h-3.5 w-3.5 shrink-0 text-muted-foreground" />
                 <div className="min-w-0 flex-1">
-                  <a
-                    href={doc.fileUrl}
-                    target="_blank"
-                    rel="noopener noreferrer"
-                    className="font-medium text-foreground hover:text-primary"
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setPreviewTitle(supplementaryDocLabel(doc))
+                      setPreviewKey(doc.fileKey)
+                    }}
+                    className="font-medium text-foreground hover:text-primary text-left"
                   >
                     {supplementaryDocLabel(doc)}
-                  </a>
+                  </button>
                   <p className="text-muted-foreground truncate">{doc.filename}</p>
                   {doc.resolvesItem && (
                     <p className="text-emerald-400/80">Resolves: {doc.resolvesItem}</p>
@@ -241,6 +237,13 @@ export function AddSupportingDocument({
           </form>
         </CollapsibleContent>
       </Collapsible>
+
+      <DocumentPreviewDialog
+        title={previewTitle}
+        storageKey={previewKey}
+        open={!!previewKey}
+        onClose={() => setPreviewKey(null)}
+      />
     </div>
   )
 }

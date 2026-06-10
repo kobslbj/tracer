@@ -6,13 +6,23 @@ const DOC_URL_GETTERS: Record<string, (docs: UploadedDocs) => string | undefined
   'Commercial Invoice': d => d.commercialInvoiceUrl,
 }
 
+const DOC_KEY_GETTERS: Record<string, (docs: UploadedDocs) => string | undefined> = {
+  'Packing List': d => d.packingListKey,
+  'Commercial Invoice': d => d.commercialInvoiceKey,
+}
+
 export function uploadedDocUrl(docName: string, docs?: UploadedDocs): string | undefined {
   if (!docs) return undefined
   return DOC_URL_GETTERS[docName]?.(docs)
 }
 
+export function uploadedDocKey(docName: string, docs?: UploadedDocs): string | undefined {
+  if (!docs) return undefined
+  return DOC_KEY_GETTERS[docName]?.(docs)
+}
+
 export function isUploadedDoc(docName: string, docs?: UploadedDocs): boolean {
-  return !!uploadedDocUrl(docName, docs)
+  return !!uploadedDocKey(docName, docs) || !!uploadedDocUrl(docName, docs)
 }
 
 export function docFileMetaToUploaded(meta: {

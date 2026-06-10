@@ -3,7 +3,7 @@
 import { useState } from 'react'
 import { Badge } from '@/components/ui/badge'
 import { UploadedDocs } from '@/lib/types'
-import { isUploadedDoc, uploadedDocUrl } from '@/lib/doc-links'
+import { isUploadedDoc, uploadedDocKey } from '@/lib/doc-links'
 import { DocumentPreviewDialog } from './document-preview-dialog'
 import { cn } from '@/lib/utils'
 import { FileCheck } from 'lucide-react'
@@ -15,7 +15,7 @@ interface RequiredDocBadgeProps {
 
 export function RequiredDocBadge({ name, uploadedDocs }: RequiredDocBadgeProps) {
   const [previewOpen, setPreviewOpen] = useState(false)
-  const url = uploadedDocUrl(name, uploadedDocs)
+  const storageKey = uploadedDocKey(name, uploadedDocs)
   const uploaded = isUploadedDoc(name, uploadedDocs)
 
   if (!uploaded) {
@@ -41,7 +41,7 @@ export function RequiredDocBadge({ name, uploadedDocs }: RequiredDocBadgeProps) 
       </button>
       <DocumentPreviewDialog
         title={name}
-        url={url ?? null}
+        storageKey={storageKey ?? null}
         open={previewOpen}
         onClose={() => setPreviewOpen(false)}
       />

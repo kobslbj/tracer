@@ -2,6 +2,7 @@
 
 import { useEffect, useMemo, useRef, useState } from 'react'
 import { useStore } from '@/lib/store'
+import { useAuth } from '@/lib/auth'
 import { AttentionQueueTable } from '@/components/dashboard/attention-queue-table'
 import { EntryModal } from '@/components/entry/entry-modal'
 import { Entry, PrimaryQueue } from '@/lib/types'
@@ -29,6 +30,7 @@ function shipmentWord(n: number): string {
 
 export default function DashboardPage() {
   const { state, dispatch } = useStore()
+  const { user, loading: authLoading } = useAuth()
   const [newEntryId, setNewEntryId] = useState<string | null>(null)
   const [selectedEntry, setSelectedEntry] = useState<Entry | null>(null)
   const [activeTab, setActiveTab] = useState<PrimaryQueue>('waiting_on_docs')
@@ -52,6 +54,8 @@ export default function DashboardPage() {
   }, [state.entries])
 
   useEffect(() => {
+    if (authLoading || !user) return
+
     let connected = false
 
     async function connect() {
@@ -73,7 +77,7 @@ export default function DashboardPage() {
     return () => {
       if (connected) insforge.realtime.disconnect()
     }
-  }, [dispatch])
+  }, [dispatch, authLoading, user])
 
   const filteredEntries = useMemo(() => {
     return queueEntries.filter(entry => {

@@ -59,6 +59,8 @@ export interface Entry {
   /** Broker-uploaded docs not in the original AI review (COO, phytosanitary, etc.). */
   supplementaryDocs?: SupplementaryDoc[]
   uploadedDocs?: UploadedDocs
+  /** Workspace scope — set at insert, RLS enforces isolation. */
+  workspaceId?: string
   createdAt: string
   updatedAt: string
 }
@@ -242,6 +244,8 @@ export interface ShipmentTimelineEvent {
   /** ISO date — supplier promised document/action by this date */
   promisedBy?: string
   relatedItems?: string[]
+  /** Hours from first-detected to resolution — set on issue_resolved events for the metrics layer. */
+  resolutionTimeHours?: number
   createdAt: string
 }
 
@@ -254,6 +258,12 @@ export interface TriageRow {
   actionNeeded: string
   isResolved: boolean
   coordinationLine?: string | null
+  /** When the shipment entered the review queue, e.g. "18h ago" — always shown. */
+  enteredReviewAgo?: string
+  /** Workflow-time urgency line, e.g. "Waiting on supplier · 18h". */
+  workflowLine?: string | null
+  /** Still waiting with no recent activity — render the workflow line with urgency. */
+  stalled?: boolean
 }
 
 export type FieldStatus = 'ok' | 'missing' | 'mismatch'

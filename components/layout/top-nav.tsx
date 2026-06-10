@@ -4,7 +4,10 @@ import Link from 'next/link'
 import Image from 'next/image'
 import { usePathname } from 'next/navigation'
 import { useStore } from '@/lib/store'
+import { useAuth } from '@/lib/auth'
 import { cn } from '@/lib/utils'
+import { Button } from '@/components/ui/button'
+import { LogOut } from 'lucide-react'
 
 const navItems = [
   { href: '/intake', label: 'New Shipment' },
@@ -14,6 +17,9 @@ const navItems = [
 export function TopNav() {
   const pathname = usePathname()
   const { state } = useStore()
+  const { user, workspaceName, signOut } = useAuth()
+
+  if (pathname === '/sign-in') return null
 
   const attentionCount = state.entries.filter(
     e => e.status === 'needs_attention' || e.status === 'waiting_on_docs',
@@ -52,15 +58,39 @@ export function TopNav() {
           })}
         </nav>
 
-        {/* Right: live status */}
-        <div className="ml-auto flex items-center gap-2 rounded-full border border-border/70 bg-card/60 px-2.5 py-1 text-xs text-muted-foreground">
-          <span className="relative flex h-1.5 w-1.5">
-            <span className="absolute inline-flex h-full w-full animate-ping rounded-full bg-emerald-400/70" />
-            <span className="relative inline-flex h-1.5 w-1.5 rounded-full bg-emerald-400" />
-          </span>
-          <span className="tabular-nums">
-            {attentionCount > 0 ? `${attentionCount} need attention` : 'Live'}
-          </span>
+        {/* Right: workspace + status + sign out */}
+        <div className="ml-auto flex items-center gap-2">
+          {workspaceName && (
+            <span className="hidden sm:inline text-xs text-muted-foreground truncate max-w-[140px]">
+              {workspaceName}
+            </span>
+          )}
+          <div className="flex items-center gap-2 rounded-full border border-border/70 bg-card/60 px-2.5 py-1 text-xs text-muted-foreground">
+            <span className="relative flex h-1.5 w-1.5">
+              <span className="absolute inline-flex h-full w-full animate-ping rounded-full bg-emerald-400/70" />
+              <span className="relative inline-flex h-1.5 w-1.5 rounded-full bg-emerald-400" />
+            </span>
+            <span className="tabular-nums">
+              {attentionCount > 0 ? `${attentionCount} need attention` : 'Live'}
+            </span>
+          </div>
+          {user && (
+            <div className="flex items-center gap-1.5">
+              <span className="hidden md:inline text-xs text-muted-foreground truncate max-w-[160px]">
+                {user.email}
+              </span>
+              <Button
+                type="button"
+                variant="ghost"
+                size="icon"
+                className="h-8 w-8 text-muted-foreground hover:text-foreground"
+                onClick={() => void signOut()}
+                title="Sign out"
+              >
+                <LogOut className="h-3.5 w-3.5" />
+              </Button>
+            </div>
+          )}
         </div>
       </div>
     </header>

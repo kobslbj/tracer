@@ -1,7 +1,9 @@
 import type { Metadata } from "next";
 import { Inter, JetBrains_Mono } from "next/font/google";
 import "./globals.css";
+import { AuthProvider } from "@/lib/auth";
 import { StoreProvider } from "@/lib/store";
+import { AuthGuard } from "@/components/layout/auth-guard";
 import { TopNav } from "@/components/layout/top-nav";
 
 const inter = Inter({
@@ -32,14 +34,18 @@ export default function RootLayout({
       className={`${inter.variable} ${jetbrainsMono.variable} dark h-full antialiased`}
     >
       <body className="app-backdrop app-grid min-h-full text-foreground">
-        <StoreProvider>
-          <div className="relative flex min-h-screen flex-col">
-            <TopNav />
-            <main className="relative flex-1">
-              {children}
-            </main>
-          </div>
-        </StoreProvider>
+        <AuthProvider>
+          <StoreProvider>
+            <AuthGuard>
+              <div className="relative flex min-h-screen flex-col">
+                <TopNav />
+                <main className="relative flex-1">
+                  {children}
+                </main>
+              </div>
+            </AuthGuard>
+          </StoreProvider>
+        </AuthProvider>
       </body>
     </html>
   );
