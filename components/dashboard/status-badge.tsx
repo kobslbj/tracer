@@ -30,7 +30,7 @@ export function ResolutionBadge() {
       variant="outline"
       className="border-emerald-800 bg-emerald-950 text-xs font-medium text-emerald-300"
     >
-      Ready to Submit
+      Ready for Review
     </Badge>
   )
 }

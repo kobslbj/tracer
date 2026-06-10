@@ -11,9 +11,14 @@ import { entryUrgencyScore } from './issue-display'
 import {
   deriveShipmentSummary,
   deriveMissingItems,
+  deriveOperationalState,
   tagAllIssues,
 } from './shipment-review'
-import { deriveCoordinationState } from './shipment-timeline'
+import {
+  deriveSupplierAwareCoordination,
+  normalizeSupplierName,
+  type SupplierProfile,
+} from './supplier-profile'
 
 export type ResolutionFilter = 'active' | 'ready_to_submit'
 
@@ -180,57 +185,58 @@ export function buildReviewSnapshot(
   return snapshot
 }
 
+const MISMATCH_CODES = new Set([
+  'quantity_mismatch',
+  'value_mismatch',
+  'currency_mismatch',
+  'weight_mismatch',
+])
+
+function hasMismatchErrors(issues: ReconcileIssue[]): boolean {
+  return issues.some(i => i.severity === 'error' && MISMATCH_CODES.has(i.code))
+}
+
+function hasWaitingOnDocs(snapshot: EntryReviewSnapshot): boolean {
+  return (
+    snapshot.missingItems.length > 0 ||
+    snapshot.issues.some(i => i.code === 'coo_certificate_missing')
+  )
+}
+
+/** Broker marked coordination complete (timeline event, not a CBP filing). */
 export function isResolved(entry: Entry): boolean {
-  return entry.status === 'ready_to_submit'
+  return entry.timeline?.some(e => e.type === 'filing_ready') ?? false
 }
 
 /** Single primary inbox bucket — priority-ordered, mutually exclusive. */
 export function derivePrimaryStatus(
   snapshot: EntryReviewSnapshot,
-  entry: Entry,
+  _entry: Entry,
 ): PrimaryQueue | null {
-  if (isResolved(entry)) return null
-  if (snapshot.filability === 'blocking' || entry.riskLevel === 'High') {
-    return 'needs_attention'
-  }
-  if (snapshot.missingItems.length > 0) {
+  if (isResolved(_entry)) return null
+  if (hasMismatchErrors(snapshot.issues)) return 'needs_attention'
+  if (hasWaitingOnDocs(snapshot) || snapshot.filability === 'blocking') {
     return 'waiting_on_docs'
   }
   return 'ready_for_review'
 }
 
-/** Non-exclusive tags for inbox triage — can overlap. */
-export function deriveTags(entry: Entry, snapshot: EntryReviewSnapshot): string[] {
+/** Operational tags only — no agency/compliance flag chips. */
+export function deriveTags(_entry: Entry, snapshot: EntryReviewSnapshot): string[] {
+  const op = deriveOperationalState(snapshot.issues, _entry.brokerCorrections)
   const tags: string[] = []
 
-  for (const flag of snapshot.agencyFlags) {
-    if (!tags.includes(flag)) tags.push(flag)
+  if (op.waitingOn.some(w => /coo|certificate of origin/i.test(w))) {
+    tags.push('COO pending')
+  }
+  if (op.waitingOn.some(w => /supplier|confirmation|mismatch/i.test(w))) {
+    tags.push('Supplier pending')
+  }
+  if (op.waitingOn.length > 0 && tags.length === 0) {
+    tags.push('Waiting on docs')
   }
 
-  for (const item of snapshot.missingItems) {
-    const label = /coo|certificate of origin/i.test(item.label)
-      ? 'COO Pending'
-      : item.label
-    if (!tags.includes(label)) tags.push(label)
-  }
-
-  if (entry.riskLevel === 'High' && !tags.includes('High Risk')) {
-    tags.push('High Risk')
-  }
-
-  if (
-    (snapshot.htsConfidence === 'needs_review' ||
-      snapshot.issues.some(i => i.confidence === 'needs_review')) &&
-    !tags.includes('Low Confidence')
-  ) {
-    tags.push('Low Confidence')
-  }
-
-  if (entry.reviewRequired && !tags.includes('Manual Review')) {
-    tags.push('Manual Review')
-  }
-
-  return tags
+  return tags.slice(0, 2)
 }
 
 export function legacyTriageFromEntry(entry: Entry): EntryReviewSnapshot {
@@ -263,15 +269,23 @@ export function getReviewSnapshot(entry: Entry): EntryReviewSnapshot {
   return entry.reviewSnapshot ?? legacyTriageFromEntry(entry)
 }
 
-export function deriveTriageRow(entry: Entry): TriageRow {
+export function deriveTriageRow(
+  entry: Entry,
+  supplierIndex?: Map<string, SupplierProfile>,
+): TriageRow {
   const snapshot = getReviewSnapshot(entry)
   const resolved = isResolved(entry)
   const primaryStatus = resolved ? null : derivePrimaryStatus(snapshot, entry)
-  const primaryAction = snapshot.suggestedActions[0] ?? 'Review shipment'
+  const op = deriveOperationalState(snapshot.issues, entry.brokerCorrections)
+  const primaryAction = op.currentBlocker ?? op.nextAction
 
   const timeline = entry.timeline ?? []
   const waitingOn = snapshot.missingItems.map(m => m.label)
-  const coordination = deriveCoordinationState(timeline, waitingOn)
+  const profile = entry.supplier
+    ? supplierIndex?.get(normalizeSupplierName(entry.supplier)) ?? null
+    : null
+  const coordination = deriveSupplierAwareCoordination(timeline, waitingOn, profile)
+  // Suppress only the generic base placeholder — supplier-aware upgrades pass through.
   const coordinationLine =
     timeline.length > 0 && coordination.coordinationLine !== 'No follow-up logged yet'
       ? coordination.coordinationLine
@@ -314,8 +328,8 @@ export function matchesResolutionFilter(
 }
 
 export const PRIMARY_QUEUE_LABELS: Record<PrimaryQueue, string> = {
-  needs_attention: 'Action Required',
-  waiting_on_docs: 'Awaiting Documents',
+  needs_attention: 'Needs Attention',
+  waiting_on_docs: 'Waiting on Docs',
   ready_for_review: 'Ready for Review',
 }
 

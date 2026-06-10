@@ -4,6 +4,7 @@ import { motion, AnimatePresence } from 'framer-motion'
 import { Entry } from '@/lib/types'
 import { PrimaryStatusBadge, ResolutionBadge } from './status-badge'
 import { deriveTriageRow, getReviewSnapshot, sortEntriesForQueue } from '@/lib/entry-triage'
+import { SupplierProfile } from '@/lib/supplier-profile'
 import {
   Table,
   TableBody,
@@ -12,11 +13,12 @@ import {
   TableHeader,
   TableRow,
 } from '@/components/ui/table'
-import { Badge } from '@/components/ui/badge'
 import { cn } from '@/lib/utils'
 
 interface AttentionQueueTableProps {
   entries: Entry[]
+  /** Cross-shipment supplier history, keyed by normalized supplier name. */
+  supplierIndex?: Map<string, SupplierProfile>
   newEntryId?: string | null
   showPrimaryStatus?: boolean
   emptyStateMessage?: string
@@ -24,38 +26,9 @@ interface AttentionQueueTableProps {
   onRowClick?: (entry: Entry) => void
 }
 
-function TagsCell({ tags, compact }: { tags: string[]; compact?: boolean }) {
-  if (tags.length === 0) {
-    return <span className="text-xs text-muted-foreground">—</span>
-  }
-  const limit = compact ? 2 : 3
-  const shown = tags.slice(0, limit)
-  const rest = tags.length - shown.length
-  return (
-    <div className="flex flex-wrap gap-0.5">
-      {shown.map(tag => (
-        <Badge
-          key={tag}
-          variant="outline"
-          className={cn(
-            'border-amber-800/40 bg-amber-950/20 font-normal text-amber-200/90',
-            compact ? 'px-1 py-0 text-[10px]' : 'text-xs',
-          )}
-        >
-          {tag}
-        </Badge>
-      ))}
-      {rest > 0 && (
-        <Badge variant="outline" className={cn('font-normal text-muted-foreground', compact ? 'px-1 py-0 text-[10px]' : 'text-xs')}>
-          +{rest}
-        </Badge>
-      )}
-    </div>
-  )
-}
-
 export function AttentionQueueTable({
   entries,
+  supplierIndex,
   newEntryId,
   showPrimaryStatus = true,
   emptyStateMessage = 'No shipments match this view.',
@@ -79,16 +52,15 @@ export function AttentionQueueTable({
           <TableRow className={cn('border-border bg-muted/30 hover:bg-transparent', compact && 'h-7')}>
             <TableHead className={cn('font-medium text-muted-foreground', compact && 'h-7 py-1 text-[11px]')}>Shipment</TableHead>
             {showPrimaryStatus && (
-              <TableHead className={cn('font-medium text-muted-foreground', compact && 'h-7 py-1 text-[11px]')}>Primary Status</TableHead>
+              <TableHead className={cn('font-medium text-muted-foreground', compact && 'h-7 py-1 text-[11px]')}>Status</TableHead>
             )}
-            <TableHead className={cn('font-medium text-muted-foreground', compact && 'h-7 py-1 text-[11px]')}>Tags</TableHead>
-            <TableHead className={cn('font-medium text-muted-foreground', compact && 'h-7 py-1 text-[11px]')}>Action Needed</TableHead>
+            <TableHead className={cn('font-medium text-muted-foreground', compact && 'h-7 py-1 text-[11px]')}>Next step</TableHead>
           </TableRow>
         </TableHeader>
         <TableBody>
           <AnimatePresence initial={false}>
             {sorted.map(entry => {
-              const row = deriveTriageRow(entry)
+              const row = deriveTriageRow(entry, supplierIndex)
               return (
                 <motion.tr
                   key={entry.id}
@@ -125,10 +97,7 @@ export function AttentionQueueTable({
                       )}
                     </TableCell>
                   )}
-                  <TableCell className={compact ? 'py-1' : undefined}>
-                    <TagsCell tags={row.tags} compact={compact} />
-                  </TableCell>
-                  <TableCell className={cn('max-w-[200px]', compact ? 'py-1' : 'py-2')}>
+                  <TableCell className={cn('max-w-[240px]', compact ? 'py-1' : 'py-2')}>
                     <p className={cn('truncate text-foreground', compact ? 'text-[11px]' : 'text-sm')}>
                       <span className="text-muted-foreground mr-1">→</span>{row.actionNeeded}
                     </p>
