@@ -11,11 +11,12 @@ export const EVENT_TYPE_LABELS: Record<ShipmentEventType, string> = {
   document_uploaded: 'Documents uploaded',
   review_completed: 'Review completed',
   issue_resolved: 'Issue resolved',
-  followup_drafted: 'Follow-up drafted',
+  followup_drafted: 'Follow-up generated',
   followup_sent: 'Follow-up sent',
   supplier_replied: 'Supplier replied',
-  broker_verified: 'Broker verified',
-  filing_ready: 'Ready to submit',
+  broker_verified: 'Broker reviewed flag',
+  supporting_document_added: 'Supporting document added',
+  filing_ready: 'Ready for broker review',
 }
 
 export function createTimelineEvent(input: {
@@ -141,7 +142,7 @@ function hoursSince(iso: string): number {
   return (Date.now() - new Date(iso).getTime()) / (1000 * 60 * 60)
 }
 
-function startOfDay(iso: string): number {
+export function startOfDay(iso: string): number {
   const d = new Date(iso)
   d.setHours(0, 0, 0, 0)
   return d.getTime()
