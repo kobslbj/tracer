@@ -9,7 +9,7 @@ export async function POST(req: NextRequest) {
   try {
     const body = await req.json()
     const {
-      productName, description, htsCode, originCountry, port, portOfDischarge,
+      productName, description, supplier, importer, htsCode, originCountry, port, portOfDischarge,
       quantity, valueUsd, incoterm,
       dutyRate, estimatedDutyUsd,
       riskLevel, reviewRequired, reviewReason, requiredDocs, explanation,
@@ -33,6 +33,8 @@ export async function POST(req: NextRequest) {
       portOfDischarge: portOfDischarge ?? undefined,
       productName,
       description: description ?? '',
+      supplier: supplier ?? undefined,
+      importer: importer ?? undefined,
       originCountry,
       quantity: quantity ?? 1,
       valueUsd,
