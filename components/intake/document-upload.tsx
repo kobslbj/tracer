@@ -2,9 +2,9 @@
 
 import { useRef, useState, DragEvent } from 'react'
 import { Button } from '@/components/ui/button'
-import { DocType, DOC_LABELS, OptionalDocType, OPTIONAL_DOC_LABELS } from '@/lib/types'
+import { DocType, DOC_LABELS, OptionalDocType } from '@/lib/types'
 import { cn } from '@/lib/utils'
-import { FileText, UploadCloud, X, ScanLine, Package, Receipt, FileSpreadsheet, ImageIcon } from 'lucide-react'
+import { FileText, UploadCloud, X, ScanLine, Package, Receipt } from 'lucide-react'
 
 const ACCEPT = '.pdf,.png,.jpg,.jpeg,image/png,image/jpeg,application/pdf'
 const MAX_BYTES = 15 * 1024 * 1024
@@ -117,91 +117,10 @@ function RequiredPicker({
   )
 }
 
-function OptionalPicker({
-  docType,
-  file,
-  disabled,
-  onPick,
-  onClear,
-  error,
-}: {
-  docType: OptionalDocType
-  file: File | null
-  disabled: boolean
-  onPick: (file: File) => void
-  onClear: () => void
-  error: string | null
-}) {
-  const inputRef = useRef<HTMLInputElement>(null)
-  const [dragging, setDragging] = useState(false)
-  const icon = docType === 'spec_sheet'
-    ? <FileSpreadsheet className="h-4 w-4" />
-    : <ImageIcon className="h-4 w-4" />
-
-  function handleDrop(e: DragEvent) {
-    e.preventDefault()
-    setDragging(false)
-    if (disabled) return
-    const dropped = e.dataTransfer.files?.[0]
-    if (dropped) onPick(dropped)
-  }
-
-  return (
-    <div>
-      <div
-        role="button"
-        tabIndex={0}
-        onClick={() => !disabled && inputRef.current?.click()}
-        onKeyDown={e => { if ((e.key === 'Enter' || e.key === ' ') && !disabled) inputRef.current?.click() }}
-        onDragOver={e => { e.preventDefault(); if (!disabled) setDragging(true) }}
-        onDragLeave={() => setDragging(false)}
-        onDrop={handleDrop}
-        className={cn(
-          'flex w-full cursor-pointer items-center gap-2 rounded-lg border border-dashed border-border/70 bg-card/30 px-3 py-2.5 text-left text-sm transition-colors hover:border-primary/40',
-          file && 'border-solid border-emerald-500/20',
-          dragging && 'border-primary/70 bg-primary/5',
-          disabled && 'pointer-events-none opacity-60',
-        )}
-      >
-        <span className="text-muted-foreground">{icon}</span>
-        <span className="flex-1 truncate text-muted-foreground">
-          {file ? file.name : OPTIONAL_DOC_LABELS[docType]}
-        </span>
-        {file && !disabled && (
-          <button
-            type="button"
-            onClick={e => { e.stopPropagation(); onClear() }}
-            className="rounded p-0.5 text-muted-foreground hover:text-foreground"
-          >
-            <X className="h-3.5 w-3.5" />
-          </button>
-        )}
-      </div>
-      <input
-        ref={inputRef}
-        type="file"
-        accept={ACCEPT}
-        className="hidden"
-        disabled={disabled}
-        onChange={e => {
-          const f = e.target.files?.[0]
-          if (f) onPick(f)
-          e.target.value = ''
-        }}
-      />
-      {error && <p className="mt-1 text-xs text-red-400">{error}</p>}
-    </div>
-  )
-}
-
 export function DocumentUpload({ onAnalyze, disabled }: DocumentUploadProps) {
   const [required, setRequired] = useState<Record<DocType, File | null>>({
     packing_list: null,
     commercial_invoice: null,
-  })
-  const [optional, setOptional] = useState<Record<OptionalDocType, File | null>>({
-    spec_sheet: null,
-    product_image: null,
   })
   const [errors, setErrors] = useState<Record<string, string | null>>({})
 
@@ -212,21 +131,14 @@ export function DocumentUpload({ onAnalyze, disabled }: DocumentUploadProps) {
     setRequired(p => ({ ...p, [docType]: file }))
   }
 
-  function assignOptional(docType: OptionalDocType, file: File) {
-    const err = validateFile(file)
-    if (err) { setErrors(p => ({ ...p, [docType]: err })); return }
-    setErrors(p => ({ ...p, [docType]: null }))
-    setOptional(p => ({ ...p, [docType]: file }))
-  }
-
   const ready = !!required.packing_list && !!required.commercial_invoice
 
   return (
     <div className="rounded-xl border border-border bg-card/60 p-5 backdrop-blur-sm space-y-5">
       <div>
-        <p className="text-sm font-medium text-foreground">Upload shipment documents</p>
+        <p className="text-sm font-medium text-foreground">Commercial Invoice + Packing List</p>
         <p className="mt-0.5 text-xs text-muted-foreground">
-          PDF, PNG or JPG · max 15MB per file
+          PDF, PNG or JPG · max 15MB per file · pre-filing review only
         </p>
       </div>
 
@@ -244,36 +156,16 @@ export function DocumentUpload({ onAnalyze, disabled }: DocumentUploadProps) {
         ))}
       </div>
 
-      <div>
-        <p className="mb-2 text-xs font-medium uppercase tracking-wider text-muted-foreground">Optional attachments</p>
-        <div className="grid gap-2 sm:grid-cols-2">
-          {(['spec_sheet', 'product_image'] as OptionalDocType[]).map(docType => (
-            <OptionalPicker
-              key={docType}
-              docType={docType}
-              file={optional[docType]}
-              disabled={disabled}
-              onPick={f => assignOptional(docType, f)}
-              onClear={() => setOptional(p => ({ ...p, [docType]: null }))}
-              error={errors[docType] ?? null}
-            />
-          ))}
-        </div>
-      </div>
-
       <div className="flex justify-end">
         <Button
           onClick={() => {
             if (!ready) return
-            const opt: Partial<Record<OptionalDocType, File>> = {}
-            if (optional.spec_sheet) opt.spec_sheet = optional.spec_sheet
-            if (optional.product_image) opt.product_image = optional.product_image
             onAnalyze({
               required: {
                 packing_list: required.packing_list!,
                 commercial_invoice: required.commercial_invoice!,
               },
-              optional: opt,
+              optional: {},
             })
           }}
           disabled={!ready || disabled}
@@ -281,7 +173,7 @@ export function DocumentUpload({ onAnalyze, disabled }: DocumentUploadProps) {
           className="gap-1.5 bg-primary text-primary-foreground shadow-[0_0_18px_-6px_var(--color-primary)] hover:bg-primary/90"
         >
           <ScanLine className="h-4 w-4" />
-          Review shipment
+          Start pre-filing review
         </Button>
       </div>
     </div>

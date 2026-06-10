@@ -35,7 +35,10 @@ export function ResolutionActionButton({
   const [loading, setLoading] = useState(false)
   const [copied, setCopied] = useState(false)
 
-  const actionable = isRequestCooAction(action) || context.missingItems.length > 0
+  const actionable =
+    action === 'Generate follow-up email' ||
+    isRequestCooAction(action) ||
+    context.missingItems.length > 0
 
   async function handleClick() {
     setLoading(true)
@@ -99,7 +102,11 @@ export function ResolutionActionButton({
       ) : (
         <ClipboardCopy className="h-3 w-3" />
       )}
-      {loading ? 'Preparing…' : copied ? (entryId ? 'Copied + logged' : 'Copied draft + checklist') : action}
+      {loading
+        ? 'Generating…'
+        : copied
+          ? (entryId ? 'Follow-up generated' : 'Copied to clipboard')
+          : (action === 'Generate follow-up email' ? 'Generate follow-up email' : action)}
     </Button>
   )
 }

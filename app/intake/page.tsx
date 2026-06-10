@@ -7,47 +7,22 @@ import { useStore } from '@/lib/store'
 import { insertEntry, saveEntryReviewUpdate } from '@/lib/insforge-db'
 import { buildReviewSnapshot, derivePrimaryStatus } from '@/lib/entry-triage'
 import { computeIssueListDelta } from '@/lib/review-delta'
-import { eventsForReviewSave, prependTimelineEvents } from '@/lib/shipment-timeline'
+import { eventsForReviewSave, prependTimelineEvents, createFollowupDraftedEvent } from '@/lib/shipment-timeline'
 import { docFileMetaToUploaded } from '@/lib/doc-links'
-import { entryOverridesFromDocs } from '@/lib/entry-from-docs'
+import { buildEntryFromDocs } from '@/lib/entry-from-docs'
+import { deriveImporterProfile } from '@/lib/importer-profile'
 import {
-  Entry, AgentStatus, AgentPhase, RiskLevel,
-  DocType, ExtractedDoc, ReconcileResult, DocFileMeta, OptionalDocType, ReviewDelta,
-  ReconcileIssue,
+  DocType, ExtractedDoc, ReconcileResult, DocFileMeta, ReviewDelta,
+  ReconcileIssue, ShipmentTimelineEvent,
 } from '@/lib/types'
-import { ShipmentInput } from '@/components/intake/shipment-input'
 import { DocumentUpload, DocumentUploadPayload } from '@/components/intake/document-upload'
 import { FieldTable } from '@/components/intake/field-table'
 import { ReconcilePanel } from '@/components/intake/reconcile-panel'
 import { ShipmentReviewSummary } from '@/components/intake/shipment-review-summary'
-import { ReviewTrace } from '@/components/intake/review-trace'
-import { AgentPipeline, PipelineAgent } from '@/components/intake/agent-pipeline'
-import { EntryResult } from '@/components/entry/entry-result'
-import { Tag, Calculator, ShieldCheck, FileText, Loader2, ChevronDown } from 'lucide-react'
+import { ImporterProfilePanel } from '@/components/shipment/importer-profile-panel'
+import { Button } from '@/components/ui/button'
+import { Loader2, ChevronDown, Save } from 'lucide-react'
 import { cn } from '@/lib/utils'
-
-const agentConfig: Record<keyof AgentStatus, { name: string; description: string; icon: React.ReactNode }> = {
-  hts: {
-    name: 'Classification review',
-    description: 'Potential HTS issues',
-    icon: <Tag className="w-4 h-4" />,
-  },
-  duty: {
-    name: 'Tariff review',
-    description: 'Estimated duties',
-    icon: <Calculator className="w-4 h-4" />,
-  },
-  compliance: {
-    name: 'Import compliance review',
-    description: 'Regulatory flags',
-    icon: <ShieldCheck className="w-4 h-4" />,
-  },
-  entry: {
-    name: 'Entry draft',
-    description: 'Pre-filing summary',
-    icon: <FileText className="w-4 h-4" />,
-  },
-}
 
 type DocPhase = 'idle' | 'processing' | 'done' | 'error'
 
@@ -58,37 +33,6 @@ function readAsDataUrl(file: File): Promise<string> {
     reader.onerror = () => reject(reader.error)
     reader.readAsDataURL(file)
   })
-}
-
-function buildShipmentDescription(pl: ExtractedDoc, inv: ExtractedDoc): string {
-  const supplier = inv.supplier ?? pl.supplier ?? 'an overseas supplier'
-  const product = inv.productDescription ?? pl.productDescription
-  const coo = pl.productDescription?.match(/south africa/i) ? 'South Africa'
-    : pl.portOfLoading?.match(/south africa/i) ? 'South Africa'
-    : pl.coo ?? inv.coo ?? 'an unspecified country'
-  const importer = inv.importer ?? pl.importer
-  const weight = pl.grossWeightKg ?? pl.netWeightKg ?? inv.grossWeightKg
-  const value = inv.totalValue ?? pl.totalValue
-  const currency = inv.currency ?? pl.currency ?? 'USD'
-  const qtyMt = inv.quantityUnit === 'MT' ? inv.quantity
-    : pl.packUnitKg && pl.quantity ? (pl.quantity * pl.packUnitKg) / 1000
-    : pl.grossWeightKg ? pl.grossWeightKg / 1000
-    : null
-
-  const parts = [
-    product ?? `Shipment from ${supplier}`,
-    `country of origin ${coo}`,
-    importer ? `imported by ${importer}` : null,
-    qtyMt != null ? `${qtyMt} MT` : null,
-    weight != null ? `gross weight ${weight.toLocaleString()} kg` : null,
-    value != null ? `total declared value ${currency} ${value.toLocaleString()}` : null,
-    inv.portOfDischarge ?? pl.portOfDischarge
-      ? `port of discharge ${inv.portOfDischarge ?? pl.portOfDischarge}`
-      : null,
-    inv.incoterm ?? pl.incoterm ? `incoterm ${inv.incoterm ?? pl.incoterm}` : null,
-  ].filter(Boolean)
-
-  return parts.join(', ') + '.'
 }
 
 export default function IntakePage() {
@@ -103,7 +47,6 @@ function IntakePageContent() {
   const router = useRouter()
   const searchParams = useSearchParams()
   const { state, dispatch } = useStore()
-  const [showManualInput, setShowManualInput] = useState(false)
 
   const [docPhase, setDocPhase] = useState<DocPhase>('idle')
   const [docLogs, setDocLogs] = useState<string[]>([])
@@ -113,6 +56,10 @@ function IntakePageContent() {
   const [reviewDelta, setReviewDelta] = useState<ReviewDelta | null>(null)
   const priorIssuesRef = useRef<ReconcileIssue[] | null>(null)
   const [uploadedFiles, setUploadedFiles] = useState<DocFileMeta | null>(null)
+  const [pendingTimeline, setPendingTimeline] = useState<ShipmentTimelineEvent[]>([])
+  const [advancedExpanded, setAdvancedExpanded] = useState(false)
+  const [saving, setSaving] = useState(false)
+  const [saveError, setSaveError] = useState<string | null>(null)
 
   const resumingEntry = useMemo(() => {
     const entryId = searchParams.get('entryId')
@@ -120,110 +67,22 @@ function IntakePageContent() {
     return state.entries.find(e => e.id === entryId) ?? null
   }, [searchParams, state.entries])
 
+  const intakeImporter = extracted
+    ? extracted.invoice.importer ?? extracted.packingList.importer
+    : null
+  const intakeImporterProfile = useMemo(() => {
+    if (!intakeImporter) return null
+    // On re-review the entry being re-checked is already in the store —
+    // exclude it so the panel only reflects prior shipments.
+    const priorEntries = resumingEntry
+      ? state.entries.filter(e => e.id !== resumingEntry.id)
+      : state.entries
+    return deriveImporterProfile(intakeImporter, priorEntries)
+  }, [intakeImporter, state.entries, resumingEntry])
+
   const pushDocLog = useCallback((line: string) => {
     setDocLogs(prev => [...prev, line])
   }, [])
-
-  const [logLines, setLogLines] = useState<Record<keyof AgentStatus, string[]>>({
-    hts: [], duty: [], compliance: [], entry: [],
-  })
-  const [showAgents, setShowAgents] = useState(false)
-  const [draftExpanded, setDraftExpanded] = useState(false)
-  const [draftStarted, setDraftStarted] = useState(false)
-  const [advancedExpanded, setAdvancedExpanded] = useState(false)
-
-  const appendLog = useCallback((agent: keyof AgentStatus, lines: string[]) => {
-    setLogLines(prev => ({ ...prev, [agent]: [...prev[agent], ...lines] }))
-  }, [])
-
-  async function callAgent<T>(url: string, body: Record<string, unknown>, agent: keyof AgentStatus): Promise<T> {
-    const res = await fetch(url, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify(body),
-    })
-    if (!res.ok) {
-      const err = await res.json().catch(() => ({ error: res.statusText }))
-      const message = err.error ?? `${url} failed with ${res.status}`
-      appendLog(agent, [`✗ ${message}`])
-      throw new Error(message)
-    }
-    const data = await res.json()
-    if (data.logs?.length) appendLog(agent, data.logs)
-    return data as T
-  }
-
-  async function runAgents(
-    input: string,
-    files?: DocFileMeta,
-    docCtx?: { packingList: ExtractedDoc; invoice: ExtractedDoc; reconcile: ReconcileResult },
-  ) {
-    dispatch({ type: 'RESET_AGENTS' })
-    dispatch({ type: 'SET_PROCESSING', value: true })
-    setLogLines({ hts: [], duty: [], compliance: [], entry: [] })
-    setShowAgents(true)
-    setDraftStarted(true)
-
-    const localPhase: Record<keyof AgentStatus, AgentPhase> = {
-      hts: 'idle', duty: 'idle', compliance: 'idle', entry: 'idle',
-    }
-    const setPhase = (agent: keyof AgentStatus, phase: AgentPhase) => {
-      localPhase[agent] = phase
-      dispatch({ type: 'SET_AGENT_STATUS', agent, phase })
-    }
-
-    try {
-      setPhase('hts', 'running')
-      const classify = await callAgent<{
-        htsCode: string; productName: string; description: string
-        originCountry: string; port: 'LAX' | 'JFK' | 'SEA'
-        quantity: number; valueUsd: number; incoterm: string
-      }>('/api/agents/classify', { input }, 'hts')
-      setPhase('hts', 'complete')
-
-      setPhase('duty', 'running')
-      setPhase('compliance', 'running')
-      const [duty, compliance] = await Promise.all([
-        callAgent<{ dutyRate: number; estimatedDutyUsd: number; dutyBasis: string }>('/api/agents/duty', {
-          htsCode: classify.htsCode,
-          originCountry: classify.originCountry,
-          valueUsd: classify.valueUsd,
-          incoterm: classify.incoterm,
-        }, 'duty').then(r => { setPhase('duty', 'complete'); return r }),
-        callAgent<{ riskLevel: RiskLevel; reviewRequired: boolean; reviewReason: string; requiredDocs: string[]; explanation: string }>('/api/agents/compliance', {
-          htsCode: classify.htsCode,
-          originCountry: classify.originCountry,
-          productName: classify.productName,
-          description: classify.description,
-        }, 'compliance').then(r => { setPhase('compliance', 'complete'); return r }),
-      ])
-
-      setPhase('entry', 'running')
-      const docOverrides = docCtx ? entryOverridesFromDocs(docCtx.packingList, docCtx.invoice, docCtx.reconcile) : {}
-      const { draft } = await callAgent<{ draft: Entry }>('/api/agents/draft', {
-        ...classify,
-        ...docOverrides,
-        dutyRate: duty.dutyRate,
-        estimatedDutyUsd: duty.estimatedDutyUsd,
-        riskLevel: compliance.riskLevel,
-        reviewRequired: compliance.reviewRequired,
-        reviewReason: compliance.reviewReason,
-        requiredDocs: compliance.requiredDocs,
-        explanation: compliance.explanation,
-        uploadedDocs: files ? docFileMetaToUploaded(files) : undefined,
-      }, 'entry')
-      setPhase('entry', 'complete')
-
-      dispatch({ type: 'SET_DRAFT', draft })
-    } catch (err) {
-      console.error('[runAgents]', err)
-      ;(['hts', 'duty', 'compliance', 'entry'] as const).forEach(agent => {
-        if (localPhase[agent] === 'running') setPhase(agent, 'error')
-      })
-    } finally {
-      dispatch({ type: 'SET_PROCESSING', value: false })
-    }
-  }
 
   async function uploadDoc(file: File): Promise<{ url?: string; key?: string }> {
     const dataUrl = await readAsDataUrl(file)
@@ -268,10 +127,9 @@ function IntakePageContent() {
     setExtracted(null)
     setReconcile(null)
     setUploadedFiles(null)
-    setShowAgents(false)
-    setDraftExpanded(false)
-    setDraftStarted(false)
+    setPendingTimeline([])
     setAdvancedExpanded(false)
+    setSaveError(null)
 
     try {
       pushDocLog('→ Uploading documents...')
@@ -285,28 +143,14 @@ function IntakePageContent() {
         invoiceUrl: invMeta.url,
       }
 
-      const optionalKeys: OptionalDocType[] = ['spec_sheet', 'product_image']
-      for (const key of optionalKeys) {
-        const file = payload.optional[key]
-        if (!file) continue
-        pushDocLog(`→ Storing optional ${key.replace('_', ' ')}...`)
-        const meta = await uploadDoc(file)
-        if (key === 'spec_sheet') {
-          fileMeta.specSheetKey = meta.key
-          fileMeta.specSheetUrl = meta.url
-        } else {
-          fileMeta.productImageKey = meta.key
-          fileMeta.productImageUrl = meta.url
-        }
-      }
-
+      pushDocLog('→ Reading document fields...')
       const [packingList, invoice] = await Promise.all([
         extractDoc('packing_list', plFile),
         extractDoc('commercial_invoice', invFile),
       ])
       setExtracted({ packingList, invoice })
 
-      pushDocLog('→ Cross-checking documents...')
+      pushDocLog('→ Cross-checking Invoice vs Packing List...')
       const priorIssues =
         reconcile?.issues ??
         priorIssuesRef.current ??
@@ -355,132 +199,95 @@ function IntakePageContent() {
     }
   }
 
-  function handleExpandDraft() {
-    const next = !draftExpanded
-    setDraftExpanded(next)
-    if (next && !draftStarted && extracted && reconcile) {
-      const description = buildShipmentDescription(extracted.packingList, extracted.invoice)
-      runAgents(description, uploadedFiles ?? undefined, {
-        packingList: extracted.packingList,
-        invoice: extracted.invoice,
-        reconcile,
-      })
-    }
+  function handleFollowUpLogged(labels: string[]) {
+    setPendingTimeline(prev => [createFollowupDraftedEvent(labels), ...prev])
   }
 
-  const [saveError, setSaveError] = useState<string | null>(null)
+  async function handleSaveShipment() {
+    if (!extracted || !reconcile) return
 
-  async function handleSaveForReview() {
-    if (!state.currentDraft) return
-    const draft = state.currentDraft
-    const issues = reconcile?.issues ?? []
+    const uploadedDocs = uploadedFiles ? docFileMetaToUploaded(uploadedFiles) : undefined
+    const base = buildEntryFromDocs(
+      extracted.packingList,
+      extracted.invoice,
+      reconcile,
+      uploadedDocs,
+      resumingEntry
+        ? {
+            id: resumingEntry.id,
+            entryNo: resumingEntry.entryNo,
+            createdAt: resumingEntry.createdAt,
+            timeline: resumingEntry.timeline,
+          }
+        : undefined,
+    )
+
     const previousSnapshot = resumingEntry?.reviewSnapshot ?? null
-    const reviewSnapshot = buildReviewSnapshot(issues, draft, { previousSnapshot })
+    const reviewSnapshot = buildReviewSnapshot(reconcile.issues, base, { previousSnapshot })
     if (!reviewSnapshot.delta && reviewDelta) {
       reviewSnapshot.delta = reviewDelta
     }
-    const primaryStatus = derivePrimaryStatus(reviewSnapshot, draft) ?? 'ready_for_review'
+    const primaryStatus = derivePrimaryStatus(reviewSnapshot, base) ?? 'ready_for_review'
     const now = new Date().toISOString()
 
+    setSaving(true)
     setSaveError(null)
     try {
       if (resumingEntry) {
-        const updated: Entry = {
-          ...draft,
-          id: resumingEntry.id,
-          entryNo: resumingEntry.entryNo,
-          createdAt: resumingEntry.createdAt,
+        const updated = {
+          ...base,
           status: primaryStatus,
           reviewSnapshot,
-          uploadedDocs: uploadedFiles ? docFileMetaToUploaded(uploadedFiles) : resumingEntry.uploadedDocs,
+          uploadedDocs: uploadedDocs ?? resumingEntry.uploadedDocs,
           updatedAt: now,
         }
         await saveEntryReviewUpdate(resumingEntry, updated)
+        const reviewEvents = eventsForReviewSave(resumingEntry, updated)
         const timeline = prependTimelineEvents(
-          resumingEntry.timeline,
-          eventsForReviewSave(resumingEntry, updated),
+          prependTimelineEvents(resumingEntry.timeline, pendingTimeline),
+          reviewEvents,
         )
         dispatch({ type: 'UPDATE_ENTRY', entry: { ...updated, timeline } })
       } else {
-        const entry: Entry = {
-          ...draft,
+        const entry = {
+          ...base,
           status: primaryStatus,
           reviewSnapshot,
-          uploadedDocs: uploadedFiles ? docFileMetaToUploaded(uploadedFiles) : undefined,
           updatedAt: now,
         }
-        entry.timeline = eventsForReviewSave(null, entry)
+        const reviewEvents = eventsForReviewSave(null, entry)
+        entry.timeline = prependTimelineEvents(pendingTimeline, reviewEvents)
         await insertEntry(entry)
         dispatch({ type: 'APPROVE_ENTRY', entry })
       }
     } catch (err) {
-      console.error('[handleSaveForReview]', err)
-      setSaveError('Failed to save entry. Please try again.')
+      console.error('[handleSaveShipment]', err)
+      setSaveError('Failed to save shipment. Please try again.')
       return
+    } finally {
+      setSaving(false)
     }
     router.push('/dashboard')
   }
 
-  const agentKeys = ['hts', 'duty', 'compliance', 'entry'] as const
-  const allComplete = agentKeys.every(k => state.agentStatus[k] === 'complete')
-  const blockingCount = reconcile?.issues.filter(i => i.severity === 'error').length ?? 0
-
-  const pipelineAgents: PipelineAgent[] = agentKeys.map(key => ({
-    key,
-    name: agentConfig[key].name,
-    description: agentConfig[key].description,
-    icon: agentConfig[key].icon,
-    phase: state.agentStatus[key],
-    logLines: logLines[key],
-  }))
-
   const docBusy = docPhase === 'processing'
+  const hasIssues = (reconcile?.issues.length ?? 0) > 0
 
   return (
     <div className="mx-auto max-w-3xl px-6 py-12">
       <div className="mb-8">
-        <h1 className="text-2xl font-semibold tracking-tight text-foreground">
-          {resumingEntry ? 'Continue shipment review' : 'AI copilot for customs document review'}
+        <p className="text-xs font-medium uppercase tracking-wider text-primary/80">Pre-filing coordination</p>
+        <h1 className="mt-1 text-2xl font-semibold tracking-tight text-foreground">
+          {resumingEntry ? 'Revised document uploaded' : 'What blocks this shipment?'}
         </h1>
         <p className="mt-1.5 text-sm text-muted-foreground">
           {resumingEntry
-            ? `Re-upload documents for ${resumingEntry.productName} — changes since last review will be tracked.`
-            : 'Upload shipment documents to detect missing paperwork, compliance risks, and filing issues before submission.'}
+            ? `Re-checking ${resumingEntry.productName} — review delta tracks what changed.`
+            : 'Upload Invoice + Packing List. See what\'s missing, who to follow up with, and when it\'s ready.'}
         </p>
       </div>
 
-      <DocumentUpload onAnalyze={runDocumentFlow} disabled={docBusy || state.isProcessing} />
-
-      <p className="mt-4 text-center text-xs text-muted-foreground">
-        No documents yet?{' '}
-        <button
-          type="button"
-          onClick={() => setShowManualInput(v => !v)}
-          disabled={docBusy || state.isProcessing}
-          className="text-primary underline-offset-2 hover:underline disabled:opacity-50"
-        >
-          Describe shipment manually
-        </button>
-      </p>
-
-      <AnimatePresence>
-        {showManualInput && (
-          <motion.div
-            initial={{ opacity: 0, height: 0 }}
-            animate={{ opacity: 1, height: 'auto' }}
-            exit={{ opacity: 0, height: 0 }}
-            className="mt-4 overflow-hidden"
-          >
-            <ShipmentInput
-              onSubmit={input => {
-                setShowManualInput(false)
-                runAgents(input)
-              }}
-              disabled={state.isProcessing || docBusy}
-            />
-          </motion.div>
-        )}
-      </AnimatePresence>
+      <DocumentUpload onAnalyze={runDocumentFlow} disabled={docBusy} />
 
       <AnimatePresence>
         {docLogs.length > 0 && docPhase !== 'done' && (
@@ -492,7 +299,7 @@ function IntakePageContent() {
           >
             <div className="mb-2 flex items-center gap-2 text-xs font-semibold uppercase tracking-wider text-muted-foreground">
               {docBusy && <Loader2 className="h-3.5 w-3.5 animate-spin text-primary" />}
-              Processing
+              Reviewing documents
             </div>
             <div className="space-y-1 font-mono text-xs text-muted-foreground">
               {docLogs.map((l, i) => (
@@ -517,18 +324,39 @@ function IntakePageContent() {
             transition={{ duration: 0.3 }}
             className="mt-10 space-y-4"
           >
+            {intakeImporter && intakeImporterProfile && (
+              <ImporterProfilePanel
+                profile={intakeImporterProfile}
+                importerName={intakeImporter}
+                minShipmentsForHistory={1}
+              />
+            )}
+
             <ShipmentReviewSummary
               issues={reconcile.issues}
               packingList={extracted.packingList}
               invoice={extracted.invoice}
               delta={reviewDelta}
+              onFollowUpLogged={handleFollowUpLogged}
+              followUpLogged={pendingTimeline.some(e => e.type === 'followup_drafted')}
             />
 
-            <ReviewTrace
-              issues={reconcile.issues}
-              packingList={extracted.packingList}
-              invoice={extracted.invoice}
-            />
+            <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between rounded-xl border border-border bg-card/60 px-4 py-3">
+              <p className="text-xs text-muted-foreground">
+                {hasIssues
+                  ? 'Save to track follow-ups and re-checks in the review queue.'
+                  : 'No blocking issues — save for broker review.'}
+              </p>
+              <Button onClick={handleSaveShipment} disabled={saving} className="gap-1.5 shrink-0">
+                {saving ? <Loader2 className="h-4 w-4 animate-spin" /> : <Save className="h-4 w-4" />}
+                {saving ? 'Saving…' : resumingEntry ? 'Save re-review' : 'Save shipment'}
+              </Button>
+            </div>
+            {saveError && (
+              <p className="rounded-lg border border-red-800/50 bg-red-950/30 px-3 py-2 text-xs text-red-300">
+                {saveError}
+              </p>
+            )}
 
             <div className="rounded-xl border border-border bg-card/60 backdrop-blur-sm">
               <button
@@ -537,9 +365,9 @@ function IntakePageContent() {
                 className="flex w-full items-center justify-between gap-3 px-5 py-4 text-left"
               >
                 <div>
-                  <p className="text-sm font-medium text-foreground">Advanced review</p>
+                  <p className="text-sm font-medium text-foreground">Technical details</p>
                   <p className="text-xs text-muted-foreground mt-0.5">
-                    Full issue breakdown, extracted fields, and cross-document comparison
+                    OCR fields and full issue breakdown — secondary
                   </p>
                 </div>
                 <ChevronDown className={cn('h-4 w-4 shrink-0 text-muted-foreground transition-transform', advancedExpanded && 'rotate-180')} />
@@ -551,103 +379,22 @@ function IntakePageContent() {
                     initial={{ opacity: 0, height: 0 }}
                     animate={{ opacity: 1, height: 'auto' }}
                     exit={{ opacity: 0, height: 0 }}
-                    className="overflow-hidden border-t border-border/60 px-5 pb-5 pt-4 space-y-8"
+                    className="overflow-hidden border-t border-border/60 px-5 pb-5 pt-4 space-y-6"
                   >
                     <ReconcilePanel issues={reconcile.issues} />
                     <div>
-                      <SectionHeader title="Extracted fields" />
+                      <p className="mb-3 text-xs font-semibold uppercase tracking-wider text-muted-foreground">
+                        Extracted fields
+                      </p>
                       <FieldTable fields={reconcile.fields} />
                     </div>
                   </motion.div>
                 )}
               </AnimatePresence>
             </div>
-
-            <div className="rounded-xl border border-border bg-card/60 backdrop-blur-sm">
-              <button
-                type="button"
-                onClick={handleExpandDraft}
-                disabled={state.isProcessing}
-                className="flex w-full items-center justify-between gap-3 px-5 py-4 text-left"
-              >
-                <div>
-                  <p className="text-sm font-medium text-foreground">Pre-submission review</p>
-                  <p className="text-xs text-muted-foreground mt-0.5">
-                    HTS estimate, duty summary, and filing readiness — optional
-                  </p>
-                </div>
-                <ChevronDown className={cn('h-4 w-4 shrink-0 text-muted-foreground transition-transform', draftExpanded && 'rotate-180')} />
-              </button>
-
-              <AnimatePresence>
-                {draftExpanded && (
-                  <motion.div
-                    initial={{ opacity: 0, height: 0 }}
-                    animate={{ opacity: 1, height: 'auto' }}
-                    exit={{ opacity: 0, height: 0 }}
-                    className="overflow-hidden border-t border-border/60 px-5 pb-5 pt-4"
-                  >
-                    {showAgents && (
-                      <div className="space-y-6">
-                        <AgentPipeline agents={pipelineAgents} />
-                        {allComplete && state.currentDraft && (
-                          <EntryResult
-                            entry={state.currentDraft}
-                            onApprove={handleSaveForReview}
-                            saveBlocked={blockingCount > 0}
-                          />
-                        )}
-                        {saveError && (
-                          <p className="rounded-lg border border-red-800/50 bg-red-950/30 px-3 py-2 text-xs text-red-300">
-                            {saveError}
-                          </p>
-                        )}
-                      </div>
-                    )}
-                    {!showAgents && state.isProcessing && (
-                      <div className="flex items-center gap-2 text-sm text-muted-foreground">
-                        <Loader2 className="h-4 w-4 animate-spin" />
-                        Generating pre-filing draft…
-                      </div>
-                    )}
-                  </motion.div>
-                )}
-              </AnimatePresence>
-            </div>
           </motion.div>
         )}
       </AnimatePresence>
-
-      {/* Manual describe path — pipeline shown directly */}
-      <AnimatePresence>
-        {showAgents && !extracted && (
-          <motion.div
-            initial={{ opacity: 0, y: 16 }}
-            animate={{ opacity: 1, y: 0 }}
-            className="mt-10 space-y-8"
-          >
-            <SectionHeader title="Pre-submission review (optional)" />
-            <AgentPipeline agents={pipelineAgents} />
-            {allComplete && state.currentDraft && (
-              <EntryResult entry={state.currentDraft} onApprove={handleSaveForReview} />
-            )}
-            {saveError && (
-              <p className="rounded-lg border border-red-800/50 bg-red-950/30 px-3 py-2 text-xs text-red-300">
-                {saveError}
-              </p>
-            )}
-          </motion.div>
-        )}
-      </AnimatePresence>
-    </div>
-  )
-}
-
-function SectionHeader({ title }: { title: string }) {
-  return (
-    <div className="mb-5 flex items-center gap-2">
-      <h2 className="text-xs font-semibold uppercase tracking-wider text-muted-foreground">{title}</h2>
-      <span className="h-px flex-1 bg-linear-to-r from-border to-transparent" />
     </div>
   )
 }
