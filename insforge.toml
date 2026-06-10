@@ -2,4 +2,6 @@
 allowed_redirect_urls = [
   "http://localhost:3000/intake",
   "http://localhost:3000/sign-in",
+  "https://tracer-pearl.vercel.app/intake",
+  "https://tracer-pearl.vercel.app/sign-in",
 ]

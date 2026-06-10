@@ -21,7 +21,7 @@ interface AuthContextValue {
   workspaceId: string | null
   workspaceName: string | null
   loading: boolean
-  signInWithGoogle: () => Promise<void>
+  signInWithGoogle: () => Promise<{ error?: string }>
   signOut: () => Promise<void>
 }
 
@@ -89,7 +89,9 @@ export function AuthProvider({ children }: { children: ReactNode }) {
 
   const signInWithGoogle = useCallback(async () => {
     const redirectTo = `${window.location.origin}/intake`
-    await insforge.auth.signInWithOAuth('google', { redirectTo })
+    const { error } = await insforge.auth.signInWithOAuth('google', { redirectTo })
+    if (error) return { error: error.message }
+    return {}
   }, [])
 
   const signOut = useCallback(async () => {
