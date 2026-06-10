@@ -25,7 +25,7 @@ import { Collapsible, CollapsibleContent, CollapsibleTrigger } from '@/component
 import { getReviewSnapshot, deriveTriageRow, isResolved } from '@/lib/entry-triage'
 import { deriveOperationalState } from '@/lib/shipment-review'
 import { appendTimelineEvents, updateEntry } from '@/lib/insforge-db'
-import { createTimelineEvent, formatRelativeTime } from '@/lib/shipment-timeline'
+import { createTimelineEvent, formatRelativeTime, deriveWorkflowTimestamps } from '@/lib/shipment-timeline'
 import { deriveSupplierProfile, deriveSupplierAwareCoordination } from '@/lib/supplier-profile'
 import { deriveImporterProfile } from '@/lib/importer-profile'
 import { useStore } from '@/lib/store'
@@ -85,6 +85,7 @@ export function EntryModal({ entry, open, onClose, onEntryUpdated }: EntryModalP
   const waitingOn = op.waitingOn
   const coordination = deriveSupplierAwareCoordination(timeline, waitingOn, supplierProfile)
   const lastReply = coordination.lastSupplierReply
+  const workflow = deriveWorkflowTimestamps(entry, waitingOn)
 
   function handleTimelineUpdated(updated: ShipmentTimelineEvent[]) {
     if (!entry) return
@@ -170,6 +171,29 @@ export function EntryModal({ entry, open, onClose, onEntryUpdated }: EntryModalP
         </DialogHeader>
 
         <div className="min-h-0 flex-1 overflow-y-auto overscroll-contain px-6 py-4 pb-6 space-y-4">
+          <div className="flex flex-wrap items-center gap-x-2 gap-y-1 text-[11px] text-muted-foreground">
+            <span>Entered review {workflow.enteredReviewAgo}</span>
+            {workflow.lastActivityAgo && (
+              <>
+                <span className="text-muted-foreground/40">·</span>
+                <span>Last activity {workflow.lastActivityAgo}</span>
+              </>
+            )}
+            {workflow.waitingLine && (
+              <>
+                <span className="text-muted-foreground/40">·</span>
+                <span
+                  className={cn(
+                    'font-medium',
+                    workflow.stalled ? 'text-red-400/90' : 'text-amber-300/90',
+                  )}
+                >
+                  {workflow.waitingLine}
+                </span>
+              </>
+            )}
+          </div>
+
           {snapshot.delta && <ReviewDeltaPanel delta={snapshot.delta} />}
 
           <OperationalWorkflowPanel issues={snapshot.issues} corrections={corrections}>

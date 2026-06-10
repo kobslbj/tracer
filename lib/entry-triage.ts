@@ -19,6 +19,7 @@ import {
   normalizeSupplierName,
   type SupplierProfile,
 } from './supplier-profile'
+import { deriveWorkflowTimestamps } from './shipment-timeline'
 
 export type ResolutionFilter = 'active' | 'ready_to_submit'
 
@@ -291,6 +292,9 @@ export function deriveTriageRow(
       ? coordination.coordinationLine
       : null
 
+  const workflow = deriveWorkflowTimestamps(entry, waitingOn)
+  const workflowLine = resolved ? null : workflow.waitingLine
+
   return {
     entryId: entry.id,
     shipment: entry.productName,
@@ -299,6 +303,9 @@ export function deriveTriageRow(
     actionNeeded: primaryAction,
     isResolved: resolved,
     coordinationLine,
+    enteredReviewAgo: workflow.enteredReviewAgo,
+    workflowLine,
+    stalled: workflow.stalled,
   }
 }
 

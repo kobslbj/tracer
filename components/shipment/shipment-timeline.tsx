@@ -3,6 +3,7 @@
 import { ShipmentTimelineEvent } from '@/lib/types'
 import {
   EVENT_TYPE_LABELS,
+  formatDuration,
   formatPromisedBy,
   formatRelativeTime,
   sortTimeline,
@@ -57,6 +58,11 @@ export function ShipmentTimeline({ events, className, limit = 8 }: ShipmentTimel
               </div>
               <p className="mt-0.5 text-[11px] leading-snug text-muted-foreground">
                 {event.summary}
+                {event.type === 'issue_resolved' && event.resolutionTimeHours != null && (
+                  <span className="text-emerald-400/80">
+                    {' '}· resolved after {formatDuration(event.resolutionTimeHours)}
+                  </span>
+                )}
               </p>
               {event.promisedBy && (
                 <p className="mt-0.5 text-[10px] text-muted-foreground/80">

@@ -55,6 +55,7 @@ export function AttentionQueueTable({
               <TableHead className={cn('font-medium text-muted-foreground', compact && 'h-7 py-1 text-[11px]')}>Status</TableHead>
             )}
             <TableHead className={cn('font-medium text-muted-foreground', compact && 'h-7 py-1 text-[11px]')}>Next step</TableHead>
+            <TableHead className={cn('text-right font-medium text-muted-foreground', compact && 'h-7 py-1 text-[11px]')}>Entered</TableHead>
           </TableRow>
         </TableHeader>
         <TableBody>
@@ -101,11 +102,24 @@ export function AttentionQueueTable({
                     <p className={cn('truncate text-foreground', compact ? 'text-[11px]' : 'text-sm')}>
                       <span className="text-muted-foreground mr-1">→</span>{row.actionNeeded}
                     </p>
+                    {!compact && row.workflowLine && (
+                      <p
+                        className={cn(
+                          'truncate text-[10px] mt-0.5',
+                          row.stalled ? 'text-red-400/90 font-medium' : 'text-muted-foreground',
+                        )}
+                      >
+                        {row.workflowLine}
+                      </p>
+                    )}
                     {!compact && row.coordinationLine && (
                       <p className="truncate text-[10px] text-muted-foreground mt-0.5">
                         {row.coordinationLine}
                       </p>
                     )}
+                  </TableCell>
+                  <TableCell className={cn('text-right whitespace-nowrap text-muted-foreground', compact ? 'py-1 text-[10px]' : 'py-2 text-xs')}>
+                    {row.enteredReviewAgo ?? '—'}
                   </TableCell>
                 </motion.tr>
               )

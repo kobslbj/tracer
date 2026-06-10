@@ -10,10 +10,14 @@ import { Clock, MessageSquare, Mail, AlertTriangle } from 'lucide-react'
 
 interface CoordinationPanelProps {
   coordination: ReturnType<typeof deriveCoordinationState>
+  /** Waiting-duration urgency line from deriveWorkflowTimestamps, e.g. "Waiting on supplier · 18h". */
+  waitingLine?: string | null
+  /** Highlight the waiting line when the workflow has stalled. */
+  stalled?: boolean
   className?: string
 }
 
-export function CoordinationPanel({ coordination, className }: CoordinationPanelProps) {
+export function CoordinationPanel({ coordination, waitingLine, stalled, className }: CoordinationPanelProps) {
   const {
     waitingOn,
     followUpCount,
@@ -35,10 +39,22 @@ export function CoordinationPanel({ coordination, className }: CoordinationPanel
       </p>
 
       {waitingOn.length > 0 && (
-        <p className="text-xs text-foreground">
-          Waiting on{' '}
-          <span className="font-medium">{waitingOn.join(', ')}</span>
-        </p>
+        <div className="space-y-0.5">
+          <p className="text-xs text-foreground">
+            Waiting on{' '}
+            <span className="font-medium">{waitingOn.join(', ')}</span>
+          </p>
+          {waitingLine && (
+            <p
+              className={cn(
+                'text-[11px] font-medium',
+                stalled ? 'text-red-400/90' : 'text-amber-300/90',
+              )}
+            >
+              {waitingLine}
+            </p>
+          )}
+        </div>
       )}
 
       {lastSupplierReply && (

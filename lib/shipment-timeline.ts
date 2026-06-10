@@ -25,6 +25,7 @@ export function createTimelineEvent(input: {
   summary: string
   promisedBy?: string
   relatedItems?: string[]
+  resolutionTimeHours?: number
 }): ShipmentTimelineEvent {
   return {
     id: crypto.randomUUID(),
@@ -33,6 +34,7 @@ export function createTimelineEvent(input: {
     summary: input.summary,
     promisedBy: input.promisedBy,
     relatedItems: input.relatedItems,
+    resolutionTimeHours: input.resolutionTimeHours,
     createdAt: new Date().toISOString(),
   }
 }
@@ -86,18 +88,48 @@ export function eventsForReviewSave(previous: Entry | null, updated: Entry): Shi
     }),
   )
 
+  const resolvedAt = Date.now()
   for (const item of updated.reviewSnapshot?.delta?.resolved ?? []) {
+    const firstDetectedIso = firstDetectedAt(previous, item.label)
+    const resolutionTimeHours = firstDetectedIso
+      ? Math.max(0, (resolvedAt - new Date(firstDetectedIso).getTime()) / (1000 * 60 * 60))
+      : undefined
     events.push(
       createTimelineEvent({
         type: 'issue_resolved',
         actor: 'ai',
         summary: `${item.label} resolved since last review`,
         relatedItems: [item.label],
+        resolutionTimeHours,
       }),
     )
   }
 
   return events
+}
+
+/**
+ * When a missing item was first detected — earliest review snapshot (in history)
+ * that listed the label, falling back to when the shipment entered review.
+ */
+function firstDetectedAt(previous: Entry | null, label: string): string | null {
+  if (!previous) return null
+  let earliest: string | null = null
+
+  const consider = (recordedAt: string | undefined, hasLabel: boolean) => {
+    if (!hasLabel || !recordedAt) return
+    if (!earliest || new Date(recordedAt) < new Date(earliest)) earliest = recordedAt
+  }
+
+  for (const record of previous.reviewHistory ?? []) {
+    const hasLabel = (record.snapshot.missingItems ?? []).some(m => m.label === label)
+    consider(record.recordedAt, hasLabel)
+  }
+
+  const currentHasLabel = (previous.reviewSnapshot?.missingItems ?? []).some(m => m.label === label)
+  consider(previous.reviewSnapshot?.recordedAt ?? previous.updatedAt, currentHasLabel)
+
+  return earliest ?? previous.createdAt
 }
 
 export function createFollowupDraftedEvent(relatedItems: string[]): ShipmentTimelineEvent {
@@ -216,6 +248,83 @@ export function formatRelativeTime(iso: string): string {
   if (h < 48) return `${Math.round(h)}h ago`
   const d = Math.round(h / 24)
   return `${d}d ago`
+}
+
+/** Compact duration without the "ago" suffix, e.g. "18h" or "3d". */
+export function formatDuration(hours: number): string {
+  if (hours < 1) return `${Math.max(1, Math.round(hours * 60))}m`
+  if (hours < 48) return `${Math.round(hours)}h`
+  return `${Math.round(hours / 24)}d`
+}
+
+const STALLED_AFTER_HOURS = 24
+
+/**
+ * Workflow state-transition timestamps derived from an entry — not DB metadata.
+ * Surfaces "how long in queue", "last activity", and "waiting duration" as the
+ * broker-native urgency signals.
+ */
+export interface WorkflowTimestamps {
+  /** Time since the shipment entered the review queue, e.g. "18h ago". */
+  enteredReviewAgo: string
+  /** Time since the most recent workflow event, e.g. "2h ago" — null when no events. */
+  lastActivityAgo: string | null
+  /** Human label for the most recent event, e.g. "Supplier replied". */
+  lastActivityLabel: string | null
+  /** Hours waiting on the supplier — null when not waiting. */
+  waitingHours: number | null
+  /** Where the waiting clock started. */
+  waitingSince: 'followup' | 'review' | null
+  /** Urgency line, e.g. "Waiting on supplier · 18h" — null when not waiting. */
+  waitingLine: string | null
+  /** Still waiting and no activity for a while. */
+  stalled: boolean
+}
+
+export function deriveWorkflowTimestamps(
+  entry: Entry,
+  waitingOn: string[],
+): WorkflowTimestamps {
+  const sorted = sortTimeline(entry.timeline ?? [])
+  const lastEvent = sorted[0] ?? null
+
+  const lastActivityIso = lastEvent?.createdAt ?? entry.updatedAt ?? null
+  const lastActivityAgo = lastActivityIso ? formatRelativeTime(lastActivityIso) : null
+  const lastActivityLabel = lastEvent ? EVENT_TYPE_LABELS[lastEvent.type] : null
+
+  const waiting = waitingOn.length > 0
+  let waitingHours: number | null = null
+  let waitingSince: 'followup' | 'review' | null = null
+  let waitingLine: string | null = null
+
+  if (waiting) {
+    const lastFollowUp = sorted.find(
+      e => e.type === 'followup_drafted' || e.type === 'followup_sent',
+    )
+    if (lastFollowUp) {
+      waitingHours = hoursSince(lastFollowUp.createdAt)
+      waitingSince = 'followup'
+    } else {
+      waitingHours = hoursSince(entry.createdAt)
+      waitingSince = 'review'
+    }
+    waitingLine = `Waiting on supplier · ${formatDuration(waitingHours)}`
+  }
+
+  const stalled =
+    waiting &&
+    lastActivityIso !== null &&
+    hoursSince(lastActivityIso) >= STALLED_AFTER_HOURS
+
+  return {
+    enteredReviewAgo: formatRelativeTime(entry.createdAt),
+    lastActivityAgo,
+    lastActivityLabel,
+    waitingHours,
+    waitingSince,
+    waitingLine,
+    stalled,
+  }
 }
 
 export function formatPromisedBy(iso: string): string {
