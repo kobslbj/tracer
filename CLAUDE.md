@@ -58,7 +58,7 @@ OCR overrides are applied to the draft entry in `lib/entry-from-docs.ts` via `en
 ### Database & Realtime
 
 InsForge Postgres tables:
-- **`entries`** — system of record for broker review inbox. Key columns: `hts_code`, `duty_rate`, `risk_level`, `status` (`needs_attention|waiting_on_docs|ready_for_review|ready_to_submit`), `review_snapshot` (JSONB with triage intelligence), `review_history` (JSONB array of past snapshots), `timeline` (JSONB array of coordination events), `uploaded_docs` (JSONB), `port_of_discharge`. Active inbox uses 3 primary queues; `ready_to_submit` is a resolved outcome (filter chip, not a queue tab). Tags are derived at runtime and can overlap.
+- **`entries`** — system of record for broker review inbox. Key columns: `hts_code`, `duty_rate`, `risk_level`, `status` (`needs_attention|waiting_on_docs|ready_for_review|ready_to_submit`), `review_snapshot` (JSONB with triage intelligence), `review_history` (JSONB array of past snapshots), `timeline` (JSONB array of coordination events), `uploaded_docs` (JSONB), `port_of_discharge`, `supplier` and `importer` (cross-shipment identity keys, denormalized from OCR at save time). Active inbox uses 3 primary queues; `ready_to_submit` is a resolved outcome (filter chip, not a queue tab). Tags are derived at runtime and can overlap.
 - **`hts_knowledge`** — tariff data with `embedding vector(1536)` column; HNSW-indexed for fast cosine search. Queried via `match_hts` RPC.
 - **`document_sets`** — OCR output + reconciliation issues per upload batch.
 
@@ -117,6 +117,24 @@ Actions: `SET_AGENT_STATUS`, `SET_DRAFT`, `APPROVE_ENTRY`, `UPDATE_ENTRY`, `SET_
 
 Timeline events are persisted in the `timeline` JSONB column via `appendTimelineEvents()`.
 
+### Supplier Responsiveness Context Layer
+
+`lib/supplier-profile.ts` accumulates cross-shipment supplier behavior — all client-side pure functions over the store's `entries[]` (no stats table or route):
+- `normalizeSupplierName()` — identity key (trim + collapse whitespace + lowercase); exact match, no fuzzy.
+- `deriveSupplierProfile()` / `buildSupplierProfileIndex()` — per-supplier stats: shipment count, avg reply hours (followup→supplier_replied gaps), promise kept/broken/pending (promisedBy vs later issue_resolved/document_uploaded), follow-ups per shipment, common missing items, responsiveness grade (fast ≤24h / moderate ≤72h / slow).
+- `deriveSupplierAwareCoordination()` — wraps `deriveCoordinationState()`, adjusting thresholds (slow/unreliable suppliers escalate at 1 follow-up/24h; fast suppliers prompt follow-up at 12h) and rewriting `coordinationLine` with supplier history. Returns plain `CoordinationState`, so `CoordinationPanel` needs no changes.
+
+Supplier identity flows: `ExtractedDoc.supplier` → `entryOverridesFromDocs()` → draft route → `entries.supplier` column. `SupplierProfilePanel` renders the history in the entry modal; the dashboard passes a `supplierIndex` into `deriveTriageRow()` for supplier-aware coordination lines.
+
+### Importer Operational Memory
+
+`lib/importer-profile.ts` is the importer-side sibling of the supplier layer — operational context memory, **not a CRM** (no editable records, no CRUD UI, no stats table; pure client-side functions over `entries[]`):
+- `deriveImporterProfile()` / `buildImporterProfileIndex()` — per-importer patterns: `missingDocPatterns` (counts the union of current snapshot + `reviewHistory` missing items so patterns survive resolution), `agencyPatterns` (flags seen in ≥2 shipments), `typicalSuppliers`, `commonProducts`, `suggestedUpfrontActions` ("Request COO from supplier upfront").
+- `formatMissingPattern()` / `formatAgencyPattern()` — display lines, deliberately qualitative ("COO frequently missing in recent shipments", "FDA documentation commonly requested") — exact "N of last M" counts and "review applies" phrasing read as legal determinations.
+- Shared identity key lives in `lib/party-identity.ts` (`normalizePartyName()`); `normalizeSupplierName` and `normalizeImporterName` are both aliases of it so supplier/importer keys stay byte-identical.
+
+Importer identity flows: `ExtractedDoc.importer` → `entryOverridesFromDocs()` → `entries.importer` column. `ImporterProfilePanel` ("Historical coordination patterns") renders in the entry modal and at intake — when extraction recognizes a known importer, the panel appears above the review summary before the broker reviews (first-time importers render nothing at intake; `minShipmentsForHistory={1}` there vs default 2 in the modal, since the saved entry counts itself).
+
 ### AI Model Gateway
 
 `lib/ai.ts` wraps OpenRouter calls. Key exports:
@@ -163,6 +181,8 @@ OPENROUTER_EMBEDDING_MODEL= # optional, defaults to text-embedding-ada-002
 - `ShipmentTimeline` — coordination event timeline (newest first).
 - `CoordinationPanel` — waiting items, last supplier reply, follow-up count, promise expiry warning.
 - `LogSupplierReply` — form to record supplier reply + promised delivery date.
+- `SupplierProfilePanel` — cross-shipment supplier history: grade badge, avg reply, promises kept/broken, common missing docs.
+- `ImporterProfilePanel` — cross-shipment "Historical coordination patterns": recurring missing docs, agency flags, typical suppliers, common products, upfront-action hints. Mounted in entry modal and intake.
 
 ### Supporting Libraries
 
@@ -175,6 +195,9 @@ OPENROUTER_EMBEDDING_MODEL= # optional, defaults to text-embedding-ada-002
 | `lib/review-delta.ts` | Compute diff between two review snapshots |
 | `lib/shipment-review.ts` | Filability status, missing item extraction, checklist text |
 | `lib/shipment-timeline.ts` | Timeline event creation, coordination state derivation |
+| `lib/supplier-profile.ts` | Cross-shipment supplier stats, supplier-aware coordination wrapper |
+| `lib/importer-profile.ts` | Cross-shipment importer patterns (missing docs, agencies, suppliers, products) |
+| `lib/party-identity.ts` | Shared `normalizePartyName()` identity key for supplier + importer profiles |
 
 ### Database Migrations
 
@@ -183,6 +206,8 @@ Located in `migrations/`. Applied in order:
 2. `20260608140000` — renames `broker_approved` → `ready_to_submit`.
 3. `20260608160000` — adds `review_history JSONB DEFAULT '[]'` for snapshot history.
 4. `20260608180000` — adds `timeline JSONB DEFAULT '[]'` for coordination memory.
+5. `20260609120000` — adds `supplier TEXT` with best-effort backfill from `document_sets` via `packingListKey`.
+6. `20260609190000` — adds `importer TEXT` with the same `document_sets` backfill.
 
 ## Current Work Status
 
