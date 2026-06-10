@@ -32,6 +32,10 @@ export interface Entry {
   portOfDischarge?: string
   productName: string
   description: string
+  /** Supplier / exporter name from shipping documents — cross-shipment identity key. */
+  supplier?: string
+  /** Importer of record from shipping documents — cross-shipment identity key. */
+  importer?: string
   originCountry: string
   quantity: number
   valueUsd: number
@@ -50,9 +54,39 @@ export interface Entry {
   reviewHistory?: ReviewSnapshotRecord[]
   /** Operational timeline — coordination memory (newest first). */
   timeline?: ShipmentTimelineEvent[]
+  /** Broker confirm/dismiss on AI flags — correction loop for future intelligence. */
+  brokerCorrections?: BrokerCorrection[]
+  /** Broker-uploaded docs not in the original AI review (COO, phytosanitary, etc.). */
+  supplementaryDocs?: SupplementaryDoc[]
   uploadedDocs?: UploadedDocs
   createdAt: string
   updatedAt: string
+}
+
+/** Broker-added supporting document — ground truth for operational memory. */
+export interface SupplementaryDoc {
+  id: string
+  docType: string
+  /** When docType is "Other". */
+  customLabel?: string
+  filename: string
+  fileUrl: string
+  fileKey: string
+  note?: string
+  /** Optional link to a waiting-on item this doc satisfies. */
+  resolvesItem?: string
+  uploadedAt: string
+}
+
+/** Broker Layer 3 — confirm or dismiss an AI-detected flag with optional reason. */
+export interface BrokerCorrection {
+  id: string
+  issueKey: string
+  issueCode: string
+  issueMessage: string
+  action: 'confirmed' | 'dismissed'
+  reason?: string
+  createdAt: string
 }
 
 export interface AgentStatus {
@@ -195,6 +229,7 @@ export type ShipmentEventType =
   | 'followup_sent'
   | 'supplier_replied'
   | 'broker_verified'
+  | 'supporting_document_added'
   | 'filing_ready'
 
 export type ShipmentEventActor = 'ai' | 'broker' | 'supplier'

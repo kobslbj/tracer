@@ -1,5 +1,5 @@
 import { insforge } from './insforge'
-import { Entry, ExtractedDoc, ReconcileResult, DocFileMeta, UploadedDocs, EntryReviewSnapshot, ReviewSnapshotRecord, ShipmentTimelineEvent } from './types'
+import { Entry, ExtractedDoc, ReconcileResult, DocFileMeta, UploadedDocs, EntryReviewSnapshot, ReviewSnapshotRecord, ShipmentTimelineEvent, BrokerCorrection, SupplementaryDoc } from './types'
 import { stripDeltaFromSnapshot } from './review-delta'
 import { eventsForReviewSave, prependTimelineEvents } from './shipment-timeline'
 
@@ -12,6 +12,8 @@ function rowToEntry(row: Record<string, unknown>): Entry {
     portOfDischarge: (row.port_of_discharge as string) ?? undefined,
     productName: row.product_name as string,
     description: row.description as string,
+    supplier: (row.supplier as string) ?? undefined,
+    importer: (row.importer as string) ?? undefined,
     originCountry: row.origin_country as string,
     quantity: row.quantity as number,
     valueUsd: Number(row.value_usd),
@@ -28,6 +30,8 @@ function rowToEntry(row: Record<string, unknown>): Entry {
     reviewSnapshot: (row.review_snapshot as EntryReviewSnapshot) ?? undefined,
     reviewHistory: (row.review_history as ReviewSnapshotRecord[]) ?? undefined,
     timeline: (row.timeline as ShipmentTimelineEvent[]) ?? undefined,
+    brokerCorrections: (row.broker_corrections as BrokerCorrection[]) ?? undefined,
+    supplementaryDocs: (row.supplementary_docs as SupplementaryDoc[]) ?? undefined,
     uploadedDocs: (row.uploaded_docs as UploadedDocs) ?? undefined,
     createdAt: row.created_at as string,
     updatedAt: row.updated_at as string,
@@ -52,6 +56,8 @@ export async function insertEntry(entry: Entry): Promise<void> {
     port_of_discharge: entry.portOfDischarge ?? null,
     product_name: entry.productName,
     description: entry.description,
+    supplier: entry.supplier ?? null,
+    importer: entry.importer ?? null,
     origin_country: entry.originCountry,
     quantity: entry.quantity,
     value_usd: entry.valueUsd,
@@ -68,6 +74,8 @@ export async function insertEntry(entry: Entry): Promise<void> {
     review_snapshot: entry.reviewSnapshot ?? null,
     review_history: entry.reviewHistory ?? [],
     timeline: entry.timeline ?? [],
+    broker_corrections: entry.brokerCorrections ?? [],
+    supplementary_docs: entry.supplementaryDocs ?? [],
     uploaded_docs: entry.uploadedDocs ?? {},
     created_at: entry.createdAt,
     updated_at: entry.updatedAt,
@@ -84,7 +92,7 @@ export async function updateEntryStatus(id: string, status: Entry['status']): Pr
 
 export async function updateEntry(
   id: string,
-  patch: Partial<Pick<Entry, 'status' | 'reviewSnapshot' | 'reviewHistory' | 'uploadedDocs' | 'timeline'>>,
+  patch: Partial<Pick<Entry, 'status' | 'reviewSnapshot' | 'reviewHistory' | 'uploadedDocs' | 'timeline' | 'brokerCorrections' | 'supplementaryDocs'>>,
 ): Promise<void> {
   const row: Record<string, unknown> = { updated_at: new Date().toISOString() }
   if (patch.status !== undefined) row.status = patch.status
@@ -92,7 +100,35 @@ export async function updateEntry(
   if (patch.reviewHistory !== undefined) row.review_history = patch.reviewHistory
   if (patch.uploadedDocs !== undefined) row.uploaded_docs = patch.uploadedDocs
   if (patch.timeline !== undefined) row.timeline = patch.timeline
+  if (patch.brokerCorrections !== undefined) row.broker_corrections = patch.brokerCorrections
+  if (patch.supplementaryDocs !== undefined) row.supplementary_docs = patch.supplementaryDocs
   await insforge.database.from('entries').update(row).eq('id', id)
+}
+
+export async function saveSupplementaryDoc(
+  entryId: string,
+  existing: SupplementaryDoc[],
+  timeline: ShipmentTimelineEvent[],
+  doc: SupplementaryDoc,
+  event: ShipmentTimelineEvent,
+): Promise<{ docs: SupplementaryDoc[]; timeline: ShipmentTimelineEvent[] }> {
+  const updatedDocs = [doc, ...existing]
+  const updatedTimeline = await appendTimelineEvents(entryId, timeline, [event])
+  await updateEntry(entryId, { supplementaryDocs: updatedDocs })
+  return { docs: updatedDocs, timeline: updatedTimeline }
+}
+
+export async function saveBrokerCorrection(
+  entryId: string,
+  corrections: BrokerCorrection[],
+  timeline: ShipmentTimelineEvent[],
+  newCorrection: BrokerCorrection,
+  newTimelineEvent: ShipmentTimelineEvent,
+): Promise<{ corrections: BrokerCorrection[]; timeline: ShipmentTimelineEvent[] }> {
+  const updatedCorrections = [newCorrection, ...corrections.filter(c => c.issueKey !== newCorrection.issueKey)]
+  const updatedTimeline = await appendTimelineEvents(entryId, timeline, [newTimelineEvent])
+  await updateEntry(entryId, { brokerCorrections: updatedCorrections })
+  return { corrections: updatedCorrections, timeline: updatedTimeline }
 }
 
 export async function appendTimelineEvents(
@@ -128,11 +164,15 @@ export async function saveEntryReviewUpdate(
     review_snapshot: updated.reviewSnapshot ?? null,
     review_history: history.slice(0, 10),
     timeline,
+    broker_corrections: updated.brokerCorrections ?? previous.brokerCorrections ?? [],
+    supplementary_docs: updated.supplementaryDocs ?? previous.supplementaryDocs ?? [],
     uploaded_docs: updated.uploadedDocs ?? {},
     updated_at: updated.updatedAt,
     // Refresh key fields that may change on re-review
     product_name: updated.productName,
     description: updated.description,
+    supplier: updated.supplier ?? null,
+    importer: updated.importer ?? null,
     origin_country: updated.originCountry,
     quantity: updated.quantity,
     value_usd: updated.valueUsd,
